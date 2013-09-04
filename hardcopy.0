@@ -1,0 +1,46 @@
+[1:C.c][5:gdb-variables][20:token.c]*
+-MiniBufExplorer-[-] [POS=0001,0001][100%] [LEN=1]
+617 (gdb) clear "/home/cxm/src/global-6.2.3/libutil/token.c:112"
+618   Deleted breakpoint 12
+619 (gdb) continue
+620   Continuing.
+621
+622   Program exited normally.
+623 (gdb) file ../global-6.2.3/gtags/gtags
+624   Load new symbol table from "/home/cxm/src/global-6.2.3/gtags/gtags"? (y or n) y
+625   Reading symbols from /home/cxm/src/global-6.2.3/gtags/gtags...done.
+626 (gdb) run
+627   Starting program: /home/cxm/src/global-6.2.3/gtags/gtags
+628
+629   Program exited normally.
+630 (gdb)
+/tmp/vT2Xgrq/6[-] [POS=0630,0001][100%] [LEN=630]
+241                 pushbackchar();
+242             /* convert token string into token number */
+243             c = SYMBOL;
+244             if (reserved)
+245                 c = (*reserved)(token, tlen);
+246             break;
+247         } else if (c == ' ') {
+248             // ignore ' '
+249             continue;
+250         } else if (c == ',' || c == ';') {
+251             break;
+252         } else{             /* special char */
+253             if (interested == NULL || strchr(interested, c))
+254                 break;
+255             /* otherwise ignore it */
+256         }
+257         sharp = percent = 0;
+258     }
+259     return lasttok = c;
+260 }
+261 /*
+262  * pushbacktoken: push back token
+263  *
+264  *  following nexttoken() return same token again.
+265  */
+266 void
+267 pushbacktoken(void)
+~/src/global-6.2.3/libutil/token.c [POS=0256,0009][63%] [LEN=404]
+
