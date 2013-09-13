@@ -55,6 +55,9 @@
 #include "parser.h"
 #include "const.h"
 
+#include "/home/cxm/src/global/sqlite3.h"
+#include <sys/stat.h>
+
 static void usage(void);
 static void help(void);
 int main(int, char **);
@@ -737,6 +740,194 @@ put_syms(int type, const char *tag, int lno, const char *path, const char *line_
 	}
 	gtags_put_using(gtop, tag, lno, data->fid, line_image);
 }
+
+#if 0
+static sqlite3 *db = NULL;
+static sqlite3_stmt *ptStmt = NULL;
+
+static void OpenDB()
+{
+	// delete old
+	if (0 == access("test.db", F_OK))
+		remove("test.db");
+   	int ret = sqlite3_open(":memory:", &db);
+	if (0 != ret)
+	{
+		db = NULL;
+		printf("Cannot open data base: %d\n", ret);
+	}
+	const char *sql = "CREATE TABLE tag("\
+					   "id INTEGER PRIMARY KEY AUTOINCREMENT," \
+					   "tag TEXT NOT NULL,"\
+					   "lno INT NOT NULL,"\
+					   "line TEXT)";
+	static const char *prepare = "INSERT INTO tag (tag, lno, line) VALUES (?1, ?2, ?3)";
+	char *zErrMsg = NULL;
+	do
+	{
+		ret = sqlite3_exec(db, sql, NULL, 0, &zErrMsg);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot create table %d: %s\n", ret, zErrMsg);
+			break;
+		}
+		sqlite3_free(zErrMsg);
+		zErrMsg = NULL;
+
+		// sqlite setting
+		ret = sqlite3_exec(db, "PRAGMA synchronous=OFF", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot set sync off: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_exec(db, "PRAGMA count_changes=OFF", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot set count changes off: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_exec(db, "PRAGMA journal_mode=MEMORY", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot set journal mode: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_exec(db, "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot set temp store: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_exec(db, "PRAGMA cache_size=-102400", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Cannot set cache size: %d\n", ret);
+			break;
+		}
+
+		// begin transaction
+		ret = sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("Begin Transaction failed: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_prepare_v2(db, prepare, -1, &ptStmt, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("prepare failed: %d\n", ret);
+			break;
+		}
+
+		return;
+	} while (0);
+
+	if (NULL != zErrMsg)
+		sqlite3_free(zErrMsg);
+	sqlite3_close(db);
+	db = NULL;
+}
+
+static void CloseDB()
+{
+	sqlite3 *fileDB = NULL;
+	sqlite3_backup *ptBackup = NULL;
+	do
+	{
+		int ret = sqlite3_exec(db, "COMMIT TRANSACTION", NULL, NULL, NULL);
+		if (SQLITE_OK != ret)
+		{
+			printf("commit transaction failed: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_open("test.db", &fileDB);
+		if (SQLITE_OK != ret)
+		{
+			printf("open file db failed\n");
+			break;
+		}
+		ptBackup = sqlite3_backup_init(fileDB, "main", db, "main");
+		if (NULL == ptBackup)
+		{
+			printf("backup db failed\n");
+			break;
+		}
+		ret = sqlite3_backup_step(ptBackup, -1);
+		if (SQLITE_DONE != ret)
+		{
+			printf("backup step failed: %d\n", ret);
+			break;
+		}
+		ret = sqlite3_backup_finish(ptBackup);
+		if (SQLITE_OK != ret)
+		{
+			printf("backup finish failed: %d\n", ret);
+			break;
+		}
+	} while (0);
+	if (NULL != db)
+		sqlite3_close(db);
+	if (NULL != fileDB)
+		sqlite3_close(db);
+}
+
+static void put_syms_sqlite(int type, const char *tag,
+		int lno, const char *path, const char *line_image, void *arg)
+{
+	/*
+	static sqlite3 *db = NULL;
+	if (NULL == db)
+	{
+		db = OpenDB();
+		if (NULL == db)
+		{
+			printf("db null, find tag type %d: %s\n", type, tag);
+			return;
+		}
+	}
+	*/
+	if (NULL == db || NULL == ptStmt)
+	{
+		printf("db open failed\n");
+		return;
+	}
+	if (NULL == tag)
+	{
+		printf("tag null\n");
+		return;
+	}
+	int len = strlen(tag);
+	if (NULL != path)
+		len += strlen(path);
+	if (NULL != line_image)
+		len += strlen(line_image);
+	if (len > 2000)
+	{
+		printf("tag %s too long\n", tag);
+		return;
+	}
+
+	/*
+	char buf[2048];
+	sprintf(buf, "INSERT INTO tag(tag, lno, line) values ('%s', %d, '%s')",
+			tag, lno, line_image);
+	int ret = sqlite3_exec(db, buf, NULL, 0, NULL);
+	if (SQLITE_OK != ret)
+		printf("Cannot insert tag %s: %d\n", tag, ret);
+	*/
+
+	sqlite3_bind_text(ptStmt, 1, tag, -1, SQLITE_STATIC);
+	sqlite3_bind_int(ptStmt, 2, lno);
+	sqlite3_bind_text(ptStmt, 3, line_image, -1, SQLITE_STATIC);
+	int ret = sqlite3_step(ptStmt);
+	if (SQLITE_DONE != ret)
+		printf("Cannot step stmt: %d\n", ret);
+	
+	sqlite3_reset(ptStmt);
+}
+#endif
+
 /*
  * updatetags: update tag file.
  *
@@ -817,6 +1008,7 @@ updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addli
 		if (vflag)
 			fprintf(stderr, " [%d/%d] extracting tags of %s\n", ++seqno, total, path + 2);
 		parse_file(path, flags, put_syms, &data);
+		// parse_file(path, flags, put_syms_sqlite, &data);
 		gtags_flush(data.gtop[GTAGS], data.fid);
 		if (data.gtop[GRTAGS] != NULL)
 			gtags_flush(data.gtop[GRTAGS], data.fid);
@@ -866,6 +1058,9 @@ createtags(const char *dbpath, const char *root)
 	else
 		find_open(NULL);
 	seqno = 0;
+	// close data base
+	// OpenDB();
+	
 	while ((path = find_read()) != NULL) {
 		if (*path == ' ') {
 			path++;
@@ -881,9 +1076,13 @@ createtags(const char *dbpath, const char *root)
 		if (vflag)
 			fprintf(stderr, " [%d] extracting tags of %s\n", seqno, path + 2);
 		parse_file(path, flags, put_syms, &data);
+		// parse_file(path, flags, put_syms_sqlite, &data);
 		gtags_flush(data.gtop[GTAGS], data.fid);
 		gtags_flush(data.gtop[GRTAGS], data.fid);
 	}
+	// open database
+	// CloseDB();
+	
 	total = seqno;
 	parser_exit();
 	find_close();
