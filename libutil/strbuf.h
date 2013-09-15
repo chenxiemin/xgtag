@@ -124,6 +124,7 @@ void strbuf_putn(STRBUF *, int);
 int strbuf_unputc(STRBUF *, int);
 char *strbuf_value(STRBUF *);
 void strbuf_trim(STRBUF *);
+void strbuf_reverse(STRBUF *sb);
 void strbuf_close(STRBUF *);
 char *strbuf_fgets(STRBUF *, FILE *, int);
 void strbuf_sprintf(STRBUF *, const char *, ...)

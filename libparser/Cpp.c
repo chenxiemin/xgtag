@@ -205,6 +205,7 @@ void skipStackPop()
 }
 #endif
 
+static void createTags(const struct parser_param *param);
 // malloc new StatementInfo
 // ppCurrentStatementInfo will be changed
 static StatementInfo *newStatementInfo(StatementInfo **ppCurrentStatementInfo);
@@ -262,6 +263,12 @@ static void skipToMatch(const struct parser_param *param,
 static void parseInitializer(const struct parser_param *param, StatementInfo *si);
 // process '('
 static void parseParentheses(const struct parser_param *param, StatementInfo *si);
+// process '{'
+static void processBraceOpen(const struct parser_param *param);
+// process '}'
+static void processBraceClose(const struct parser_param *param);
+// process ;,
+static void processStatementToken(const struct parser_param *param);
 // process __attribute__
 static void process_attribute(const struct parser_param *);
 // process class inheritance
@@ -269,14 +276,19 @@ static void processInherit(const struct parser_param *);
 // skip until a statement end
 static void skipStatement(const struct parser_param *, char endChar);
 // read args after '('
-static void parseArgs(const struct parser_param *param,
+static void readArgs(const struct parser_param *param,
 		char *prev, char *prev2, tokenInfo *current);
 // read token in a ()
 static void readParenthesesToken(const struct parser_param *param, STRBUF *buffer);
 // read function name of Operator function
 static void readOperatorFunction(STRBUF *funcName);
 // get tag name of a function point
-static void getFunctionPointName(STRBUF *tokenName, const STRBUF *functionPointName);
+static void getFunctionPointName(STRBUF *tokenName, STRBUF *functionPointName);
+// parse local variable definations in token args
+// then add in to list
+static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead);
+// get token name by token id
+static const char *getReservedToken(int token);
 // is identical char
 static inline int isident(char c);
 
@@ -317,7 +329,7 @@ static StrbufList *tail(StrbufList *head)
 	return head;
 }
 
-static void append(StrbufList **ppHead, const STRBUF *value)
+static void append(StrbufList **ppHead, STRBUF *value)
 {
 	assert(NULL != value && NULL != ppHead);
 	if (find(*ppHead, strbuf_value(value)))
@@ -345,8 +357,16 @@ static StrbufList *deleteAfter(StrbufList *tail)
 	{
 		StrbufList *del = tail;
 		tail = tail->next;
+		strbuf_close(del->name);
 		free(del);
 	}
+}
+
+// put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
+static inline void PUT_SYMS(const struct parser_param *param,
+		int type, const char *tag, int lno, const char *line)
+{
+	param->put(type, tag, lno, curfile, line, param->arg);
 }
 
 static StatementInfo *newStatementInfo(StatementInfo **ppCurrentStatementInfo)
@@ -395,13 +415,6 @@ static StatementInfo *newStatementInfo(StatementInfo **ppCurrentStatementInfo)
 	return newInfo;
 }
 
-// put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
-static inline void PUT_SYMS(const struct parser_param *param,
-		int type, const char *tag, int lno, const char *line)
-{
-	param->put(type, tag, lno, curfile, line, param->arg);
-}
-
 static void delStatementInfo(StatementInfo **ppCurrentStatementInfo,
 		const struct parser_param *param)
 {
@@ -417,6 +430,7 @@ static void delStatementInfo(StatementInfo **ppCurrentStatementInfo,
 			if (SYMBOL == prev->cc)
 				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
 						prev->lno, NULL);
+			strbuf_close(getTokenName(prev));
 		}
 
 		// free local variables
@@ -487,6 +501,18 @@ static inline void setToken(StatementInfo *si, tokenType type,
 	currentToken->lno = lno;
 }
 
+static inline void resetToken(tokenInfo *pToken)
+{
+	assert(NULL != pToken);
+
+	pToken->type = 0;
+	pToken->cc = -1;
+	pToken->lno = 0;
+	if (NULL == pToken->name)
+		pToken->name = strbuf_open(0);
+	strbuf_reset(pToken->name);
+}
+
 static inline void resetStatementToken(StatementInfo *pInfo, int prevCount)
 {
 	assert(prevCount < SAVETOKENNUM);
@@ -502,18 +528,6 @@ static inline void resetStatementInfo(StatementInfo *pInfo)
 	pInfo->isInTypedef = FALSE;
 	pInfo->isInExtern = FALSE;
 	pInfo->isInStructureBody = FALSE;
-}
-
-static inline void resetToken(tokenInfo *pToken)
-{
-	assert(NULL != pToken);
-
-	pToken->type = 0;
-	pToken->cc = -1;
-	pToken->lno = 0;
-	if (NULL == pToken->name)
-		pToken->name = strbuf_open(0);
-	strbuf_reset(pToken->name);
 }
 
 static inline BOOL isInScope(StatementInfo *si, declType scope)
@@ -542,6 +556,985 @@ static inline tokenType getTokenType(int cc)
 static inline isDefinableKeyword(tokenType type)
 {
 	return type == TOKEN_KEYWORD || type == TOKEN_NAME;
+}
+
+// Cpp: read C++ file and pickup tag entries.
+void Cpp(const struct parser_param *param)
+{
+	// init token processor
+	if (!opentoken(param->file))
+		die("'%s' cannot open.", param->file);
+	cmode = 1; // allow macro
+	crflag = 1; // require '\n' as a token
+	cppmode = 1; // treat '::' as a token
+
+	// new statementinfo to save context
+	newStatementInfo(&CurrentStatementInfo);
+
+	// init jmpbuf
+	int except = setjmp(jmpbuffer);
+	if (0 == except)
+		// parse file to create tags
+		createTags(param);
+	else if (EXCEPTION_EOF == except)
+		// exception handle
+		warning("Unexpected end of file %s", param->file);
+	else
+		warning("Unknown exception");
+
+	// clear
+	delAllStatementInfo(&CurrentStatementInfo, param);
+	closetoken();
+}
+
+static void createTags(const struct parser_param *param)
+{
+	const char *interested = "{}=,;()~";
+	int c = 0;
+	int cc = 0;
+
+	while ((cc = cppNextToken(param)) != EOF)
+	{
+		// save new token if is not brace
+		setToken(CurrentStatementInfo, getTokenType(cc),
+				token, cc, lineno);
+
+		switch (cc)
+		{
+		case SYMBOL:
+		{
+			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+			if (TOKEN_ARGS == prev->type)
+			{
+				// skip a symbol after an TOKEN_ARGS
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+				reverseToken(CurrentStatementInfo);
+			}
+			break;
+		}
+		case CHAR_BRACE_OPEN:
+			processBraceOpen(param);
+			break;
+		case CHAR_BRACE_CLOSE:
+			processBraceClose(param);
+			break;
+		case CHAR_PARENTH_OPEN:
+			parseParentheses(param, CurrentStatementInfo);
+			break;
+		case CHAR_COMMA:
+		case CHAR_SEMICOLON:
+		{
+			processStatementToken(param);
+			// reset env
+			if (CHAR_SEMICOLON == cc)
+			{
+				// reset all of the previous tokens
+				resetStatementToken(CurrentStatementInfo, 2);
+				resetStatementInfo(CurrentStatementInfo);
+				break;
+			}
+			else
+			{
+				reverseToken(CurrentStatementInfo);
+				continue;
+			}
+		}
+		case CPP_NEW:
+			// ignore line break
+			if ((c = nextToken(interested, cpp_reserved_word, 1)) == SYMBOL)
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+			break;
+		case CPP___ATTRIBUTE__:
+			process_attribute(param);
+			break;
+		default:
+			break;
+		}
+
+		// remaint token space for nestted bracek open
+		if (CHAR_BRACE_CLOSE != cc)
+		{
+			// treate as ref symbol whatever
+			tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
+			if (SYMBOL == prev2->cc)
+			{
+				PUT_SYMS(param, PARSER_REF_SYM,
+						strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
+				resetToken(prev2);
+			}
+			advanceToken(CurrentStatementInfo);
+		}
+	}
+}
+
+static void processBraceOpen(const struct parser_param *param)
+{
+	tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+	tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
+	STRBUF *tokenArgsBuf = NULL;
+	// save tag if necessary
+	if (TOKEN_ARGS == prev->type && 
+			(TOKEN_NAME == prev2->type || TOKEN_PAREN_NAME == prev2->type))
+	{
+		// save function defination if necessarey
+		if (TOKEN_NAME == prev2->type)
+		{
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev2)), prev2->lno, 
+					strbuf_value(getTokenName(prev)));
+			tokenArgsBuf = strbuf_open(0);
+			strbuf_puts(tokenArgsBuf, strbuf_value(getTokenName(prev)));
+		}
+		else
+		{
+			// return type is a function point
+			// save function point
+			STRBUF *bufName = strbuf_open(0);
+			getFunctionPointName(bufName, getTokenName(prev2));
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(bufName), prev2->lno,
+					strbuf_value(getTokenName(prev)));
+			strbuf_close(bufName);
+		}
+		resetStatementToken(CurrentStatementInfo, 2);
+	}
+	else if (TOKEN_NAME == prev->type &&
+			!isInScope(CurrentStatementInfo, DECL_FUNCTION) &&
+			(DECL_STRUCT == CurrentStatementInfo->declaration || 
+			 DECL_CLASS == CurrentStatementInfo->declaration || 
+			 DECL_UNION == CurrentStatementInfo->declaration ||
+			 DECL_ENUM == CurrentStatementInfo->declaration ||
+			 DECL_NAMESPACE == CurrentStatementInfo->declaration))
+	{
+		// save struct / union / class / enum / namespace defination
+		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+				prev->lno, NULL);
+		CurrentStatementInfo->isInStructureBody = TRUE;
+		resetStatementToken(CurrentStatementInfo, 2);
+	}
+
+	CurrentStatementInfo->isInExtern = FALSE;
+	// new context
+	newStatementInfo(&CurrentStatementInfo);
+	
+	// add function args list into statement info
+	if (NULL != tokenArgsBuf)
+	{
+		parseVarsInTokenArgs(tokenArgsBuf,
+				&(CurrentStatementInfo->localVariables));
+		// free token args
+		strbuf_close(tokenArgsBuf);
+	}
+}
+
+static void processBraceClose(const struct parser_param *param)
+{
+	// set token rest if necessary
+	tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+	if (SYMBOL == prev->cc && isInEnum(CurrentStatementInfo))
+	{
+		// save
+		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+		resetToken(prev);
+	}
+
+	// delete context
+	delStatementInfo(&CurrentStatementInfo, param);
+	if (NULL == CurrentStatementInfo)
+		newStatementInfo(&CurrentStatementInfo);
+}
+
+static void processStatementToken(const struct parser_param *param)
+{
+	// save token if necessarey
+	tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+	tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
+	if (isGlobal(CurrentStatementInfo))
+		// global scope, save struct, variable define, etc
+		if (TOKEN_NAME == prev->type &&
+				CurrentStatementInfo->isInStructureBody)
+			// struct variable define
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+		else if (TOKEN_PAREN_NAME == prev2->type && TOKEN_ARGS == prev->type)
+		{
+			// save global function point
+			STRBUF *bufName = strbuf_open(0);
+			getFunctionPointName(bufName, getTokenName(prev2));
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(bufName), prev->lno,
+					strbuf_value(getTokenName(prev)));
+			strbuf_close(bufName);
+		}
+		else if (TOKEN_NAME == prev->type &&
+				(CPP_NAMESPACE == prev2->cc | CPP_USING == prev2->cc))
+			// ignore namespace
+			PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
+					prev->lno, NULL);
+		else if (TOKEN_NAME == prev->type &&
+				isDefinableKeyword(prev2->type) &&
+				!CurrentStatementInfo->isInExtern)
+			// save global variable
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+					prev->lno, NULL);
+		else
+		{
+			// treate as ref
+			if (TOKEN_NAME == prev->type)
+				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
+						prev->lno, NULL);
+			if (TOKEN_NAME == prev2->type)
+				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
+						prev2->lno, NULL);
+		}
+	else if (TOKEN_NAME == prev->type && isInEnum(CurrentStatementInfo))
+		// save enum member
+		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+	else if (TOKEN_NAME == prev->type && CurrentStatementInfo->isInTypedef)
+	{
+		// save typedef
+		if (TOKEN_NAME == prev->type)
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+					prev->lno, NULL);
+		if (TOKEN_NAME == prev2->type)
+			PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
+					prev2->lno, NULL);
+	}
+	else
+	{
+		// TODO distingush . / -> / ::
+		// save local variable defination for ref symbol filter
+		if (isInScope(CurrentStatementInfo, DECL_FUNCTION))
+		{
+			if (TOKEN_NAME == prev->type && isDefinableKeyword(prev2->type) &&
+					!CurrentStatementInfo->isInExtern)
+			{
+				// save local variable as necessary
+				append(&(CurrentStatementInfo->localVariables), getTokenName(prev));
+				// add token type reference
+				if (TOKEN_NAME == prev2->type)
+					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
+							prev2->lno, NULL);
+			}
+			else
+			{
+				if (TOKEN_NAME == prev->type && NULL ==
+						find(CurrentStatementInfo->localVariables,
+							strbuf_value(getTokenName(prev))))
+					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
+							prev->lno, NULL);
+				if (TOKEN_NAME == prev2->type && NULL ==
+						find(CurrentStatementInfo->localVariables,
+							strbuf_value(getTokenName(prev2))))
+					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
+							prev2->lno, NULL);
+			}
+		}
+		else
+		{
+			// save ref if necessary
+			if (TOKEN_NAME == prev->type)
+				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
+						prev->lno, NULL);
+			if (TOKEN_NAME == prev2->type)
+				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
+						prev2->lno, NULL);
+		}
+	}
+}
+
+// process_attribute: skip attributes in __attribute__((...)).
+static void process_attribute(const struct parser_param *param)
+{
+	int brace = 0;
+	int c;
+	/*
+	 * Skip '...' in __attribute__((...))
+	 * but pick up symbols in it.
+	 */
+	while ((c = nextToken("()", cpp_reserved_word, 0)) != EOF) {
+		if (c == '(')
+			brace++;
+		else if (c == ')')
+			brace--;
+		else if (c == SYMBOL) {
+			PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+		}
+		if (brace == 0)
+			break;
+	}
+}
+
+static void skipToMatch(const struct parser_param *param,
+		const char match1, const char match2)
+{
+#ifdef DEBUG
+	skipStackPush(match1, lineno);
+#endif
+	skipToMatchLevel++;
+
+	int level = 1;
+	int cc = -1;
+	while (level > 0)
+	{
+		cc = nextTokenStripMacro(param);
+		if (match1 == cc)
+			level++;
+		else if (match2 == cc)
+			level--;
+		else if (SYMBOL == cc)
+		{
+			// TODO check to filter function local variable reference
+			if (NULL == find(CurrentStatementInfo->localVariables, token))
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+		}
+		else if (EOF == cc)
+			// trigger eof exception
+			longjmp(jmpbuffer, EXCEPTION_EOF);
+		else
+			; // ignore
+	}
+
+#ifdef DEBUG
+	skipStackPop();
+#endif
+
+	skipToMatchLevel--;
+	if (skipToMatchLevel < 0)
+		skipToMatchLevel = 0;
+}
+
+static void parseInitializer(const struct parser_param *param, StatementInfo *si)
+{
+	assert(NULL != si && NULL != param);
+
+	// treate all of the SYMBOLs as ref before a ';'
+	int cc = -1;
+	BOOL shouldBreak = FALSE;
+	while (1)
+	{
+		cc = nextTokenStripMacro(param);
+		switch (cc)
+		{
+			case SYMBOL:
+				// TODO check to filter function local variable reference
+				if (NULL == find(CurrentStatementInfo->localVariables, token))
+					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+				break;
+			case CHAR_COMMA:
+			case CHAR_SEMICOLON:
+			case CHAR_BRACE_CLOSE:
+				shouldBreak = TRUE;
+				pushbacktoken();
+				break;
+			case '[':
+				skipToMatch(param, '[', ']');
+				break;
+			case '(':
+				skipToMatch(param, '(', ')');
+				break;
+			case '{':
+				skipToMatch(param, '{', '}');
+				break;
+			case EOF:
+				longjmp(jmpbuffer, EXCEPTION_EOF);
+			default:
+				break;
+		}
+
+		if (shouldBreak)
+		{
+			break;
+		}
+	}
+}
+
+static void parseParentheses(const struct parser_param *param, StatementInfo *si)
+{
+	assert(NULL != param && NULL != si);
+
+	tokenInfo *prev = prevToken(si, 1);
+	tokenInfo *prev2 = prevToken(si, 2);
+	if ((prev->type == TOKEN_NAME || prev->type == TOKEN_KEYWORD) &&
+				'*' == peekc(0))
+	{
+		// a function point
+		tokenInfo *current = activeToken(CurrentStatementInfo);
+		readParenthesesToken(param, getTokenName(current));
+		current->type = TOKEN_PAREN_NAME;
+	}
+	else if ((prev->type == TOKEN_NAME || TOKEN_PAREN_NAME == prev->type)
+			//&& (prev2->type == TOKEN_NAME || TOKEN_KEYWORD == prev2->type)
+			)
+	{
+		// read args
+		if (TOKEN_NAME == prev2->type || TOKEN_KEYWORD == prev2->type)
+			readArgs(param, strbuf_value(getTokenName(prev)),
+					strbuf_value(getTokenName(prev2)),
+					activeToken(CurrentStatementInfo));
+		else
+			readArgs(param, strbuf_value(getTokenName(prev)), NULL, activeToken(CurrentStatementInfo));
+		// set declaration
+		si->declaration = DECL_FUNCTION;
+	}
+	else
+	{
+		// treate all SYMBOL as ref
+		const char *interested = "()";
+		int parenthesesLevel = 1;
+		int cc = 0;
+		while (parenthesesLevel > 0)
+		{
+			cc = nextToken(interested, cpp_reserved_word, 0);
+			if (EOF == cc)
+				longjmp(jmpbuffer, EXCEPTION_EOF);
+			else if ('(' == cc)
+				parenthesesLevel++;
+			else if (')' == cc)
+				parenthesesLevel--;
+			else if (SYMBOL == cc)
+				// TODO check to filter function local variable reference
+				if (NULL == find(CurrentStatementInfo->localVariables, token))
+					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+		}
+	}
+}
+
+static void processInherit(const struct parser_param *param)
+{
+	int cc = -1;
+	while (1)
+	{
+		cc = nextTokenStripMacro(param);
+		switch (cc)
+		{
+			case SYMBOL:
+			{
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, NULL);
+				break;
+			}
+			case CHAR_BRACE_OPEN:
+			{
+				pushbacktoken();
+				return;
+			}
+			case EOF:
+				longjmp(jmpbuffer, EXCEPTION_EOF);
+			default:
+				break;
+		}
+	}
+}
+
+static void skipStatement(const struct parser_param *param, char endChar)
+{
+	int cc = -1;
+
+	while (1)
+	{
+		cc = nextTokenStripMacro(param);
+
+		// TODO check to filter function local variable reference
+		if (SYMBOL == cc)
+		{
+			if (NULL == find(CurrentStatementInfo->localVariables, token))
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, NULL);
+		}
+		else if (endChar == cc)
+			return;
+		else if (EOF == cc)
+			longjmp(jmpbuffer, EXCEPTION_EOF);
+		else
+			;// just ignore
+	}
+}
+
+// Read args and save to StatementInfo
+static void readArgs(const struct parser_param *param,
+		char *prev, char *prev2, tokenInfo *current)
+{
+	assert(NULL != prev);
+
+	STRBUF *curBuffer = getTokenName(current);
+	if (NULL != prev2)
+	{
+		strbuf_puts(curBuffer, prev2);
+		strbuf_putc(curBuffer, ' ');
+	}
+	strbuf_puts(curBuffer, prev);
+
+	readParenthesesToken(param, curBuffer); 
+	current->type = TOKEN_ARGS;
+}
+
+static void readParenthesesToken(const struct parser_param *param, STRBUF *buffer)
+{
+	int len = 0;
+	int cc = 0;
+	int parenthesesLevel = 1;
+	strbuf_putc(buffer, CHAR_PARENTH_OPEN);
+
+	while (parenthesesLevel > 0)
+	{
+		// never return a line break
+		cc = nextTokenStripMacro(param);
+		if (SYMBOL == cc)
+		{
+			strbuf_puts(buffer, token);
+			strbuf_putc(buffer, ' ');
+		}
+		else if (IS_RESERVED_WORD(cc))
+		{
+			const char *tokenName = getReservedToken(cc);
+			if (NULL != tokenName && strlen(tokenName) > 0)
+			{
+				strbuf_puts(buffer, tokenName);
+				strbuf_putc(buffer, ' ');
+			}
+		}
+		else if ('(' == cc)
+		{
+			parenthesesLevel++;
+			strbuf_putc(buffer, (char)cc);
+		}
+		else if (')' == cc)
+		{
+			parenthesesLevel--;
+			strbuf_unputc(buffer, ' ');
+			strbuf_putc(buffer, (char)cc);
+		}
+		else if (CHAR_COMMA == cc)
+		{
+			// unput space before symbol inserted
+			strbuf_unputc(buffer, ' ');
+			strbuf_putc(buffer, (char)cc);
+			strbuf_putc(buffer, ' ');
+		}
+		else if (isspace(cc))
+			continue; // ignore
+		else if (EOF == cc)
+			longjmp(jmpbuffer, EXCEPTION_EOF);
+		else if (cc < 256) // remain last process
+			strbuf_putc(buffer, (char)cc); // anyway char treate as symbol
+		else
+			message("ignore token %d when parse parentheses", cc);
+	}
+}
+
+static void readOperatorFunction(STRBUF *funcName)
+{
+	assert(NULL != funcName);
+	strbuf_puts(funcName, "operator");
+
+	BOOL findOper = FALSE;
+	int cc = -1;
+	// never return a line break
+	while (1)
+	{
+		cc = nextToken(NULL, NULL, 1);
+		if (SYMBOL == cc)
+		{
+			strbuf_puts(funcName, token);
+			strbuf_putc(funcName, ' ');
+			findOper = TRUE;
+			continue;
+		}
+		else if (EOF == cc)
+			longjmp(jmpbuffer, EXCEPTION_EOF);
+		else if (CHAR_PARENTH_OPEN == cc)
+			if (findOper)
+			{
+				pushbacktoken();
+				break;
+			}
+		findOper = TRUE;
+		if (cc < 100)
+			strbuf_putc(funcName, (char)cc);
+		else if (cc >= C_OPERATE && cc < C_OPERATE_END)
+			strbuf_puts(funcName, OperateName[cc - C_OPERATE]);
+	}
+}
+
+static void getFunctionPointName(STRBUF *tokenName, STRBUF *functionPointName)
+{
+	// save function point
+	int isCopy = 0;
+	const char *findStart = strbuf_value(functionPointName);
+	while (*(findStart++) != '\0')
+		if (isident(*findStart))
+		{
+			isCopy = 1;
+			strbuf_putc(tokenName, *findStart);
+		}
+		else
+			if (isCopy)
+				break;
+}
+
+static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead)
+{
+	assert(NULL != tokenArgs && NULL != ppHead);
+	const char *start = strbuf_value(tokenArgs);
+	const char *end = start + strlen(start) - 1;
+	BOOL readLast = TRUE;
+	BOOL readLocal = FALSE;
+	STRBUF *tmpLocal = strbuf_open(0);
+	for (; end >= start; end--)
+	{
+		if (CHAR_PARENTH_CLOSE == *end && readLast)
+		{
+			readLocal = TRUE;
+			readLast = FALSE;
+			continue;
+		}
+		if (CHAR_COMMA == *end)
+		{
+			readLocal = TRUE;
+			continue;
+		}
+
+		// read local symbol
+		if (readLocal)
+		{
+			if (isident(*end))
+				strbuf_putc(tmpLocal, *end);
+			else
+			{
+				strbuf_reverse(tmpLocal);
+				append(ppHead, tmpLocal);
+				strbuf_reset(tmpLocal);
+				readLocal = FALSE;
+			}
+		}
+	}
+
+	strbuf_close(tmpLocal);
+}
+
+static int cppNextToken(const struct parser_param *param)
+{
+	int cc = -1;
+	BOOL needContinue = FALSE;
+	while ((cc = nextTokenStripMacro(param)) != EOF)
+	{
+		switch (cc)
+		{
+		case '[':
+			skipToMatch(param, '[', ']');
+			needContinue = TRUE;
+			break;
+		case CHAR_ASSIGNMENT:
+		{
+			if (skipToMatchLevel == 0
+					// && !isInEnum(CurrentStatementInfo)
+			   )
+			{
+				if (!isInAssign)
+				{
+					isInAssign = TRUE;
+				}
+				else
+				{
+					// already in assign state, ignore
+					needContinue = TRUE;
+					break;
+				}
+				parseInitializer(param, CurrentStatementInfo);
+			}
+			needContinue = TRUE;
+			break;
+		}
+		case CHAR_COMMA:
+		case CHAR_SEMICOLON:
+			isInAssign = FALSE;
+			break;
+		case CHAR_COLON:
+		{
+			// read class inherit if necessary
+			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+			if ((DECL_CLASS == CurrentStatementInfo->declaration ||
+						DECL_STRUCT == CurrentStatementInfo->declaration) && SYMBOL == prev->cc)
+				processInherit(param);
+			else if (TOKEN_ARGS == prev->type)
+				// skip initializer list
+				processInherit(param);
+			needContinue = TRUE;
+			break;
+		}
+		case CHAR_ANGEL_BRACKET_OPEN:
+		{
+			if (0 == skipToMatchLevel && !isInAssign)
+			{
+				// ignore template
+				skipToMatch(param, '<', '>');
+				needContinue = TRUE;
+			}
+			break;
+		}
+		case CPP_UNION:
+			CurrentStatementInfo->declaration = DECL_UNION;
+			break;
+		case CPP_STRUCT:
+			CurrentStatementInfo->declaration = DECL_STRUCT;
+			break;
+		case CPP_ENUM:
+			CurrentStatementInfo->declaration = DECL_ENUM;
+			break;
+		case CPP_CLASS:
+			CurrentStatementInfo->declaration = DECL_CLASS;
+			break;
+		case CPP_NAMESPACE:
+			CurrentStatementInfo->declaration = DECL_NAMESPACE;
+			break;
+		case CPP_WCOLON:
+			// ignore namespace
+			if (prevToken(CurrentStatementInfo, 1)->type == TOKEN_NAME)
+				reverseToken(CurrentStatementInfo);
+			needContinue = TRUE;
+			break;
+		case CPP_OPERATOR:
+		{
+			STRBUF *funcName = strbuf_open(0);
+			readOperatorFunction(funcName);
+			// copy
+			strcpy(token, strbuf_value(funcName));
+			strbuf_close(funcName);
+			cc = 0;
+			break;
+		}
+		case CPP_TYPEDEF:
+			CurrentStatementInfo->isInTypedef = TRUE;
+			needContinue = TRUE;
+			break;
+		case CPP_EXTERN:
+			CurrentStatementInfo->isInExtern = TRUE;
+			needContinue = TRUE;
+			break;
+		case CPP_TYPENAME:
+		case CPP_TEMPLATE:
+		case CPP_VOLATILE:
+		case CPP_CONST:
+			// ignore
+			needContinue = TRUE;
+			break;
+		case CPP_IF:
+		case CPP_FOR:
+		case CPP_SWITCH:
+		case CPP_WHILE:
+		{
+			// ignore line break
+			int c = 0;
+			do
+			{
+				c = nextTokenStripMacro(param);
+				if (!isspace(c))
+					break;
+			} while(1);
+
+			if (CHAR_PARENTH_OPEN == c)
+				skipToMatch(param, '(', ')');
+			else
+				pushbacktoken();
+			break;
+		}
+		case CPP_CASE:
+			skipStatement(param, CHAR_COLON);
+			break;
+		case CPP_RETURN:
+			skipStatement(param, CHAR_SEMICOLON);
+			break;
+		case CPP_THROW:
+			needContinue = TRUE;
+			break;
+		case CPP_ASM:
+		{
+			// skip space
+			int c = 0;
+			do
+			{
+				c = nextTokenStripMacro(param);
+				if (!isspace(c))
+					break;
+			} while(1);
+
+			// we dont support asm yet
+			if (CHAR_BRACE_OPEN == c)
+				// ignore
+				skipToMatch(param, '{', '}');
+			else
+				pushbacktoken();
+			break;
+		}
+		default:
+			break;
+		}
+
+		if (needContinue)
+		{
+			needContinue = FALSE;
+			continue;
+		}
+		break;
+	}
+
+	return cc;
+}
+
+static int nextTokenStripMacro(const struct parser_param *param)
+{
+	const char *interested = "{}=,;:()~[]<>*";
+	int cc = -1;
+	BOOL needContinue = FALSE;
+	while ((cc = nextToken(interested, cpp_reserved_word, 0)) != EOF)
+	{
+		switch (cc)
+		{
+			case SHARP_DEFINE:
+			case SHARP_UNDEF:
+			{
+				// mark directive state
+				directiveInfo.shouldIgnoreMacro = TRUE;
+				directiveInfo.acceptSymbolAsDefine = TRUE;
+				break;
+			}
+			case SYMBOL:
+			{
+				if (!directiveInfo.shouldIgnoreMacro)
+					break;
+
+				if (directiveInfo.acceptSymbolAsDefine)
+				{
+					// only put first symbol as define for simplification
+					PUT_SYMS(param, PARSER_DEF, token, lineno, sp);
+					directiveInfo.acceptSymbolAsDefine = FALSE;
+				}
+				else
+					// treate symbol as ref in directive context
+					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
+
+				break;
+			}
+			case SHARP_IMPORT:
+			case SHARP_INCLUDE:
+			case SHARP_INCLUDE_NEXT:
+			case SHARP_ERROR:
+			case SHARP_LINE:
+			case SHARP_PRAGMA:
+			case SHARP_WARNING:
+			case SHARP_IDENT:
+			case SHARP_SCCS:
+			{
+				int c = 0;
+				while ((c = nextToken(interested, cpp_reserved_word, 0)) != EOF && c != '\n')
+					;
+				break;
+			}
+			case SHARP_IFDEF:
+			case SHARP_IFNDEF:
+			case SHARP_IF:
+			case SHARP_ELIF:
+			case SHARP_ELSE:
+			case SHARP_ENDIF:
+			{
+				// mark the rest symbol must cannot be a DEFINE
+				// usually, this mark will cancel by the CHAR_NEW_LINE occured
+				directiveInfo.shouldIgnoreMacro = TRUE;
+				directiveInfo.acceptSymbolAsDefine = FALSE;
+				if (cc == SHARP_ELSE || cc == SHARP_ELIF)
+					setConditionDirective(directiveInfo, TRUE);
+				else if (cc == SHARP_ENDIF)
+					setConditionDirective(directiveInfo, FALSE);
+
+				// nest
+				if (cc == SHARP_IF || cc == SHARP_IFDEF || cc == SHARP_IFNDEF)
+					pushConditionDirective(&directiveInfo);
+				else if (cc == SHARP_ENDIF)
+					popConditionDirective(&directiveInfo);
+
+				needContinue = TRUE;
+				break;
+			}
+			case SHARP_SHARP:		/* ## */
+				(void)nextToken(interested, cpp_reserved_word, 1);
+				break;
+			case CHAR_NEW_LINE:
+			{
+				if (directiveInfo.shouldIgnoreMacro && !isConditionDirective(directiveInfo))
+				{
+					directiveInfo.shouldIgnoreMacro = FALSE;
+					directiveInfo.acceptSymbolAsDefine = TRUE;
+				}
+				needContinue = TRUE;
+
+				break;
+			}
+			default:
+			{
+				break;
+			}
+		}
+
+		if (needContinue || directiveInfo.shouldIgnoreMacro)
+		{
+			needContinue = FALSE;
+			continue;
+		}
+		break;
+	}
+
+	return cc;
+}
+
+int nextToken(const char *interested,
+		int (*reserved)(const char *, int), BOOL ignoreNewLine)
+{
+	int c = nexttoken(interested, reserved);
+
+	switch (c)
+	{
+		case '=':
+		{
+			if (nextChar() == '=')
+				c = C_JUDGE;
+			else
+				pushbackChar();
+			break;
+		}
+		case '!':
+		{
+			if (nextChar() == '=')
+				c = C_NOTJUDGE;
+			else
+				pushbackChar();
+			break;
+		}
+		case '<':
+		{
+			int cc = nextChar();
+			if ('<' == cc)
+				c = C_LEFTSHIFT;
+			else if ('=' == cc)
+				c = C_LESSJUDGE;
+			else
+				pushbackChar();
+
+			break;
+		}
+		case '>':
+		{
+			int cc = nextChar();
+			if ('>' == cc)
+				c = C_RIGHTSHIFT;
+			else if ('=' == cc)
+				c = C_BIGJUDGE;
+			else
+				pushbackChar();
+			break;
+		}
+		default:
+			break;
+	}
+
+	if (ignoreNewLine && CHAR_NEW_LINE == c)
+		return nextToken(interested, reserved, ignoreNewLine);
+	else
+		return c;
 }
 
 static const char *getReservedToken(int token)
@@ -699,940 +1692,6 @@ static const char *getReservedToken(int token)
 			return wordlist[i].name;
 
 	return NULL;
-}
-
-static void createTags(const struct parser_param *param)
-{
-	const char *interested = "{}=,;()~";
-	int c = 0;
-	int cc = 0;
-
-	while ((cc = cppNextToken(param)) != EOF)
-	{
-		// save new token if is not brace
-		setToken(CurrentStatementInfo, getTokenType(cc),
-				token, cc, lineno);
-
-		switch (cc)
-		{
-		case SYMBOL:
-		{
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			if (TOKEN_ARGS == prev->type)
-			{
-				// skip a symbol after an TOKEN_ARGS
-				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-				reverseToken(CurrentStatementInfo);
-			}
-			break;
-		}
-		case CHAR_BRACE_OPEN:
-		{
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
-			// save tag if necessary
-			if (TOKEN_ARGS == prev->type && 
-					(TOKEN_NAME == prev2->type || TOKEN_PAREN_NAME == prev2->type))
-			{
-				// save function defination if necessarey
-				if (TOKEN_NAME == prev2->type)
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev2)), prev2->lno, 
-							strbuf_value(getTokenName(prev)));
-				else
-				{
-					// return type is a function point
-					// save function point
-					STRBUF *bufName = strbuf_open(0);
-					getFunctionPointName(bufName, getTokenName(prev2));
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(bufName), prev2->lno,
-							strbuf_value(getTokenName(prev)));
-					strbuf_close(bufName);
-				}
-				resetStatementToken(CurrentStatementInfo, 2);
-			}
-			else if (TOKEN_NAME == prev->type &&
-					!isInScope(CurrentStatementInfo, DECL_FUNCTION) &&
-					(DECL_STRUCT == CurrentStatementInfo->declaration || 
-					 DECL_CLASS == CurrentStatementInfo->declaration || 
-						DECL_UNION == CurrentStatementInfo->declaration ||
-						DECL_ENUM == CurrentStatementInfo->declaration ||
-						DECL_NAMESPACE == CurrentStatementInfo->declaration))
-			{
-				// save struct / union / class / enum / namespace defination
-				PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
-				CurrentStatementInfo->isInStructureBody = TRUE;
-				resetStatementToken(CurrentStatementInfo, 2);
-			}
-
-			CurrentStatementInfo->isInExtern = FALSE;
-			// new context
-			newStatementInfo(&CurrentStatementInfo);
-			break;
-		}
-		case CHAR_BRACE_CLOSE:
-		{
-			// set token rest if necessary
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			if (SYMBOL == prev->cc && isInEnum(CurrentStatementInfo))
-			{
-				// save
-				PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
-				resetToken(prev);
-			}
-			
-			// delete context
-			delStatementInfo(&CurrentStatementInfo, param);
-			if (NULL == CurrentStatementInfo)
-				newStatementInfo(&CurrentStatementInfo);
-			break;
-		}
-		case CHAR_PARENTH_OPEN:
-			parseParentheses(param, CurrentStatementInfo);
-			break;
-		case CHAR_COMMA:
-		case CHAR_SEMICOLON:
-		{
-			// save token if necessarey
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
-			if (isGlobal(CurrentStatementInfo))
-				// global scope, save struct, variable define, etc
-				if (TOKEN_NAME == prev->type &&
-						CurrentStatementInfo->isInStructureBody)
-					// struct variable define
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
-				else if (TOKEN_PAREN_NAME == prev2->type && TOKEN_ARGS == prev->type)
-				{
-					// save global function point
-					STRBUF *bufName = strbuf_open(0);
-					getFunctionPointName(bufName, getTokenName(prev2));
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(bufName), prev->lno,
-							strbuf_value(getTokenName(prev)));
-					strbuf_close(bufName);
-				}
-				else if (TOKEN_NAME == prev->type &&
-						(CPP_NAMESPACE == prev2->cc | CPP_USING == prev2->cc))
-					// ignore namespace
-					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
-							prev->lno, NULL);
-				else if (TOKEN_NAME == prev->type &&
-						isDefinableKeyword(prev2->type) &&
-						!CurrentStatementInfo->isInExtern)
-					// save global variable
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
-							prev->lno, NULL);
-				else
-				{
-					// treate as ref
-					if (TOKEN_NAME == prev->type)
-						PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
-								prev->lno, NULL);
-					if (TOKEN_NAME == prev2->type)
-						PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-								prev2->lno, NULL);
-				}
-			else if (TOKEN_NAME == prev->type && isInEnum(CurrentStatementInfo))
-				// save enum member
-				PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
-			else if (TOKEN_NAME == prev->type && CurrentStatementInfo->isInTypedef)
-			{
-				// save typedef
-				if (TOKEN_NAME == prev->type)
-					PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
-							prev->lno, NULL);
-				if (TOKEN_NAME == prev2->type)
-					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-							prev2->lno, NULL);
-			}
-			else
-			{
-				// TODO distingush . / -> / ::
-				// save local variable defination for ref symbol filter
-				if (isInScope(CurrentStatementInfo, DECL_FUNCTION))
-				{
-					if (TOKEN_NAME == prev->type && isDefinableKeyword(prev2->type) &&
-							!CurrentStatementInfo->isInExtern)
-					{
-						// save local variable as necessary
-						append(&(CurrentStatementInfo->localVariables), getTokenName(prev));
-						// add token type reference
-						if (TOKEN_NAME == prev2->type)
-							PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-									prev2->lno, NULL);
-					}
-					else
-					{
-						if (TOKEN_NAME == prev->type && NULL ==
-								find(CurrentStatementInfo->localVariables,
-									strbuf_value(getTokenName(prev))))
-							PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
-									prev->lno, NULL);
-						if (TOKEN_NAME == prev2->type && NULL ==
-								find(CurrentStatementInfo->localVariables,
-									strbuf_value(getTokenName(prev2))))
-							PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-									prev2->lno, NULL);
-					}
-				}
-				else
-				{
-					// save ref if necessary
-					if (TOKEN_NAME == prev->type)
-						PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
-								prev->lno, NULL);
-					if (TOKEN_NAME == prev2->type)
-						PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-								prev2->lno, NULL);
-				}
-			}
-
-			// reset env
-			if (CHAR_SEMICOLON == cc)
-			{
-				// reset all of the previous tokens
-				resetStatementToken(CurrentStatementInfo, 2);
-				resetStatementInfo(CurrentStatementInfo);
-				break;
-			}
-			else
-				continue;
-		}
-		case CPP_NEW:
-			// ignore line break
-			if ((c = nextToken(interested, cpp_reserved_word, 1)) == SYMBOL)
-				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-			break;
-		case CPP___ATTRIBUTE__:
-			process_attribute(param);
-			break;
-		default:
-			break;
-		}
-
-		// remaint token space for nestted bracek open
-		if (CHAR_BRACE_CLOSE != cc)
-		{
-			// treate as ref symbol whatever
-			tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
-			if (SYMBOL == prev2->cc)
-			{
-				PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
-				resetToken(prev2);
-			}
-			advanceToken(CurrentStatementInfo);
-		}
-	}
-}
-
-// Cpp: read C++ file and pickup tag entries.
-void Cpp(const struct parser_param *param)
-{
-	// init token processor
-	if (!opentoken(param->file))
-		die("'%s' cannot open.", param->file);
-	cmode = 1; // allow macro
-	crflag = 1; // require '\n' as a token
-	cppmode = 1; // treat '::' as a token
-
-	// new statementinfo to save context
-	newStatementInfo(&CurrentStatementInfo);
-
-	// init jmpbuf
-	int except = setjmp(jmpbuffer);
-	if (0 == except)
-		// parse file to create tags
-		createTags(param);
-	else if (EXCEPTION_EOF == except)
-		// exception handle
-		warning("Unexpected end of file %s", param->file);
-	else
-		warning("Unknown exception");
-
-	// clear
-	delAllStatementInfo(&CurrentStatementInfo, param);
-	closetoken();
-}
-
-static int cppNextToken(const struct parser_param *param)
-{
-	const char *interested = "{}=,;:()~[]<>";
-
-	int cc = -1;
-	BOOL needContinue = FALSE;
-	while ((cc = nextTokenStripMacro(param)) != EOF)
-	{
-		switch (cc)
-		{
-		case '[':
-		{
-			skipToMatch(param, '[', ']');
-			needContinue = TRUE;
-			break;
-		}
-		case CHAR_ASSIGNMENT:
-		{
-			if (skipToMatchLevel == 0
-					// && !isInEnum(CurrentStatementInfo)
-			   )
-			{
-				if (!isInAssign)
-				{
-					isInAssign = TRUE;
-				}
-				else
-				{
-					// already in assign state, ignore
-					needContinue = TRUE;
-					break;
-				}
-				parseInitializer(param, CurrentStatementInfo);
-			}
-			needContinue = TRUE;
-			break;
-		}
-		case CHAR_COMMA:
-		case CHAR_SEMICOLON:
-		{
-			isInAssign = FALSE;
-			break;
-		}
-		case CHAR_COLON:
-		{
-			// read class inherit if necessary
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			if ((DECL_CLASS == CurrentStatementInfo->declaration ||
-						DECL_STRUCT == CurrentStatementInfo->declaration) && SYMBOL == prev->cc)
-			{
-				processInherit(param);
-			}
-			else if (TOKEN_ARGS == prev->type)
-			{
-				// skip initializer list
-				processInherit(param);
-			}
-			needContinue = TRUE;
-			break;
-		}
-		case CHAR_ANGEL_BRACKET_OPEN:
-		{
-			if (0 == skipToMatchLevel && !isInAssign)
-			{
-				// ignore template
-				skipToMatch(param, '<', '>');
-				needContinue = TRUE;
-			}
-			break;
-		}
-		case CPP_UNION:
-		{
-			CurrentStatementInfo->declaration = DECL_UNION;
-			break;
-		}
-		case CPP_STRUCT:
-		{
-			CurrentStatementInfo->declaration = DECL_STRUCT;
-			break;
-		}
-		case CPP_ENUM:
-		{
-			CurrentStatementInfo->declaration = DECL_ENUM;
-			break;
-		}
-		case CPP_CLASS:
-		{
-			CurrentStatementInfo->declaration = DECL_CLASS;
-			break;
-		}
-		case CPP_NAMESPACE:
-		{
-			CurrentStatementInfo->declaration = DECL_NAMESPACE;
-			break;
-		}
-		case CPP_WCOLON:
-		{
-			// ignore namespace
-			if (prevToken(CurrentStatementInfo, 1)->type == TOKEN_NAME)
-			{
-				reverseToken(CurrentStatementInfo);
-			}
-			needContinue = TRUE;
-			break;
-		}
-		case CPP_OPERATOR:
-		{
-			STRBUF *funcName = strbuf_open(0);
-			readOperatorFunction(funcName);
-			// copy
-			strcpy(token, strbuf_value(funcName));
-			strbuf_close(funcName);
-			cc = 0;
-			break;
-		}
-		case CPP_TYPEDEF:
-		{
-			CurrentStatementInfo->isInTypedef = TRUE;
-			needContinue = TRUE;
-			break;
-		}
-		case CPP_EXTERN:
-		{
-			CurrentStatementInfo->isInExtern = TRUE;
-			needContinue = TRUE;
-			break;
-		}
-		case CPP_TYPENAME:
-		case CPP_TEMPLATE:
-		case CPP_VOLATILE:
-		case CPP_CONST:
-		{
-			// ignore
-			needContinue = TRUE;
-			break;
-		}
-		case CPP_IF:
-		case CPP_FOR:
-		case CPP_SWITCH:
-		case CPP_WHILE:
-		{
-			// ignore line break
-			int c = nextToken(interested, cpp_reserved_word, 1);
-			if (CHAR_PARENTH_OPEN == c)
-			{
-				skipToMatch(param, '(', ')');
-			}
-			else
-			{
-				pushbacktoken();
-			}
-			break;
-		}
-		case CPP_CASE:
-		{
-			skipStatement(param, CHAR_COLON);
-			break;
-		}
-		case CPP_RETURN:
-		{
-			skipStatement(param, CHAR_SEMICOLON);
-			break;
-		}
-		case CPP_THROW:
-		{
-			needContinue = TRUE;
-			break;
-		}
-		case CPP_ASM:
-		{
-			// we dont support asm yet
-			if (CHAR_BRACE_OPEN == peekc(0))
-			{
-				// skip first BRACE_OPEN, ignore line break
-				nextToken(interested, cpp_reserved_word, 1);
-				// ignore
-				skipToMatch(param, '{', '}');
-			}
-			break;
-		}
-		default:
-			break;
-		}
-
-		if (needContinue)
-		{
-			needContinue = FALSE;
-			continue;
-		}
-		break;
-	}
-
-	return cc;
-}
-
-static int nextTokenStripMacro(const struct parser_param *param)
-{
-	const char *interested = "{}=,;:()~[]<>";
-	int cc = -1;
-	BOOL needContinue = FALSE;
-	while ((cc = nextToken(interested, cpp_reserved_word, 0)) != EOF)
-	{
-		switch (cc)
-		{
-			case SHARP_DEFINE:
-			case SHARP_UNDEF:
-			{
-				// mark directive state
-				directiveInfo.shouldIgnoreMacro = TRUE;
-				directiveInfo.acceptSymbolAsDefine = TRUE;
-				break;
-			}
-			case SYMBOL:
-			{
-				if (!directiveInfo.shouldIgnoreMacro)
-					break;
-
-				if (directiveInfo.acceptSymbolAsDefine)
-				{
-					// only put first symbol as define for simplification
-					PUT_SYMS(param, PARSER_DEF, token, lineno, sp);
-					directiveInfo.acceptSymbolAsDefine = FALSE;
-				}
-				else
-					// treate symbol as ref in directive context
-					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-
-				break;
-			}
-			case SHARP_IMPORT:
-			case SHARP_INCLUDE:
-			case SHARP_INCLUDE_NEXT:
-			case SHARP_ERROR:
-			case SHARP_LINE:
-			case SHARP_PRAGMA:
-			case SHARP_WARNING:
-			case SHARP_IDENT:
-			case SHARP_SCCS:
-			{
-				int c = 0;
-				while ((c = nextToken(interested, cpp_reserved_word, 0)) != EOF && c != '\n')
-					;
-				break;
-			}
-			case SHARP_IFDEF:
-			case SHARP_IFNDEF:
-			case SHARP_IF:
-			case SHARP_ELIF:
-			case SHARP_ELSE:
-			case SHARP_ENDIF:
-			{
-				// mark the rest symbol must cannot be a DEFINE
-				// usually, this mark will cancel by the CHAR_NEW_LINE occured
-				directiveInfo.shouldIgnoreMacro = TRUE;
-				directiveInfo.acceptSymbolAsDefine = FALSE;
-				if (cc == SHARP_ELSE || cc == SHARP_ELIF)
-					setConditionDirective(directiveInfo, TRUE);
-				else if (cc == SHARP_ENDIF)
-					setConditionDirective(directiveInfo, FALSE);
-
-				// nest
-				if (cc == SHARP_IF || cc == SHARP_IFDEF || cc == SHARP_IFNDEF)
-					pushConditionDirective(&directiveInfo);
-				else if (cc == SHARP_ENDIF)
-					popConditionDirective(&directiveInfo);
-
-				needContinue = TRUE;
-				break;
-			}
-			case SHARP_SHARP:		/* ## */
-				(void)nextToken(interested, cpp_reserved_word, 1);
-				break;
-			case CHAR_NEW_LINE:
-			{
-				if (directiveInfo.shouldIgnoreMacro && !isConditionDirective(directiveInfo))
-				{
-					directiveInfo.shouldIgnoreMacro = FALSE;
-					directiveInfo.acceptSymbolAsDefine = TRUE;
-				}
-				needContinue = TRUE;
-
-				break;
-			}
-			default:
-			{
-				break;
-			}
-		}
-
-		if (needContinue || directiveInfo.shouldIgnoreMacro)
-		{
-			needContinue = FALSE;
-			continue;
-		}
-		break;
-	}
-
-	return cc;
-}
-
-// process_attribute: skip attributes in __attribute__((...)).
-static void process_attribute(const struct parser_param *param)
-{
-	int brace = 0;
-	int c;
-	/*
-	 * Skip '...' in __attribute__((...))
-	 * but pick up symbols in it.
-	 */
-	while ((c = nextToken("()", cpp_reserved_word, 0)) != EOF) {
-		if (c == '(')
-			brace++;
-		else if (c == ')')
-			brace--;
-		else if (c == SYMBOL) {
-			PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-		}
-		if (brace == 0)
-			break;
-	}
-}
-
-static void skipToMatch(const struct parser_param *param,
-		const char match1, const char match2)
-{
-#ifdef DEBUG
-	skipStackPush(match1, lineno);
-#endif
-	skipToMatchLevel++;
-
-	int level = 1;
-	int cc = -1;
-	while (level > 0)
-	{
-		cc = nextTokenStripMacro(param);
-		if (match1 == cc)
-			level++;
-		else if (match2 == cc)
-			level--;
-		else if (SYMBOL == cc)
-		{
-			// TODO check to filter function local variable reference
-			if (NULL == find(CurrentStatementInfo->localVariables, token))
-				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-		}
-		else if (EOF == cc)
-			// trigger eof exception
-			longjmp(jmpbuffer, EXCEPTION_EOF);
-		else
-			; // ignore
-	}
-
-#ifdef DEBUG
-	skipStackPop();
-#endif
-
-	skipToMatchLevel--;
-	if (skipToMatchLevel < 0)
-		skipToMatchLevel = 0;
-}
-
-static void parseInitializer(const struct parser_param *param, StatementInfo *si)
-{
-	assert(NULL != si && NULL != param);
-
-	// treate all of the SYMBOLs as ref before a ';'
-	int cc = -1;
-	BOOL shouldBreak = FALSE;
-	while (1)
-	{
-		cc = nextTokenStripMacro(param);
-		switch (cc)
-		{
-			case SYMBOL:
-				// TODO check to filter function local variable reference
-				if (NULL == find(CurrentStatementInfo->localVariables, token))
-					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-				break;
-			case CHAR_COMMA:
-			case CHAR_SEMICOLON:
-			case CHAR_BRACE_CLOSE:
-				shouldBreak = TRUE;
-				pushbacktoken();
-				break;
-			case '[':
-				skipToMatch(param, '[', ']');
-				break;
-			case '(':
-				skipToMatch(param, '(', ')');
-				break;
-			case '{':
-				skipToMatch(param, '{', '}');
-				break;
-			case EOF:
-				longjmp(jmpbuffer, EXCEPTION_EOF);
-			default:
-				break;
-		}
-
-		if (shouldBreak)
-		{
-			break;
-		}
-	}
-}
-
-static void parseParentheses(const struct parser_param *param, StatementInfo *si)
-{
-	assert(NULL != param && NULL != si);
-
-	tokenInfo *prev = prevToken(si, 1);
-	tokenInfo *prev2 = prevToken(si, 2);
-	if ((prev->type == TOKEN_NAME || prev->type == TOKEN_KEYWORD) &&
-				'*' == peekc(0))
-	{
-		// a function point
-		tokenInfo *current = activeToken(CurrentStatementInfo);
-		readParenthesesToken(param, getTokenName(current));
-		current->type = TOKEN_PAREN_NAME;
-	}
-	else if ((prev->type == TOKEN_NAME || TOKEN_PAREN_NAME == prev->type)
-			//&& (prev2->type == TOKEN_NAME || TOKEN_KEYWORD == prev2->type)
-			)
-	{
-		// read args
-		if (TOKEN_NAME == prev2->type || TOKEN_KEYWORD == prev2->type)
-			parseArgs(param, strbuf_value(getTokenName(prev)),
-					strbuf_value(getTokenName(prev2)),
-					activeToken(CurrentStatementInfo));
-		else
-			parseArgs(param, strbuf_value(getTokenName(prev)), NULL, activeToken(CurrentStatementInfo));
-		// set declaration
-		si->declaration = DECL_FUNCTION;
-	}
-	else
-	{
-		// treate all SYMBOL as ref
-		const char *interested = "()";
-		int parenthesesLevel = 1;
-		int cc = 0;
-		while (parenthesesLevel > 0)
-		{
-			cc = nextToken(interested, cpp_reserved_word, 0);
-			if (EOF == cc)
-				longjmp(jmpbuffer, EXCEPTION_EOF);
-			else if ('(' == cc)
-				parenthesesLevel++;
-			else if (')' == cc)
-				parenthesesLevel--;
-			else if (SYMBOL == cc)
-				// TODO check to filter function local variable reference
-				if (NULL == find(CurrentStatementInfo->localVariables, token))
-					PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
-		}
-	}
-}
-
-static void processInherit(const struct parser_param *param)
-{
-	int cc = -1;
-	while (1)
-	{
-		cc = nextTokenStripMacro(param);
-		switch (cc)
-		{
-			case SYMBOL:
-			{
-				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, NULL);
-				break;
-			}
-			case CHAR_BRACE_OPEN:
-			{
-				pushbacktoken();
-				return;
-			}
-			case EOF:
-				longjmp(jmpbuffer, EXCEPTION_EOF);
-			default:
-				break;
-		}
-	}
-}
-
-static void skipStatement(const struct parser_param *param, char endChar)
-{
-	int cc = -1;
-
-	while (1)
-	{
-		cc = nextTokenStripMacro(param);
-
-		// TODO check to filter function local variable reference
-		if (SYMBOL == cc)
-		{
-			if (NULL == find(CurrentStatementInfo->localVariables, token))
-				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, NULL);
-		}
-		else if (endChar == cc)
-			return;
-		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
-		else
-			;// just ignore
-	}
-}
-
-// Read args and save to StatementInfo
-static void parseArgs(const struct parser_param *param,
-		char *prev, char *prev2, tokenInfo *current)
-{
-	assert(NULL != prev);
-
-	STRBUF *curBuffer = getTokenName(current);
-	if (NULL != prev2)
-	{
-		strbuf_puts(curBuffer, prev2);
-		strbuf_putc(curBuffer, ' ');
-	}
-	strbuf_puts(curBuffer, prev);
-
-	readParenthesesToken(param, curBuffer); 
-	current->type = TOKEN_ARGS;
-}
-
-static void readParenthesesToken(const struct parser_param *param, STRBUF *buffer)
-{
-	int len = 0;
-	int cc = 0;
-	int parenthesesLevel = 1;
-	strbuf_putc(buffer, CHAR_PARENTH_OPEN);
-
-	while (parenthesesLevel > 0)
-	{
-		// never return a line break
-		cc = nextTokenStripMacro(param);
-		if (SYMBOL == cc)
-		{
-			strbuf_puts(buffer, token);
-			strbuf_putc(buffer, ' ');
-		}
-		else if (IS_RESERVED_WORD(cc))
-		{
-			const char *tokenName = getReservedToken(cc);
-			if (NULL != tokenName && strlen(tokenName) > 0)
-			{
-				strbuf_puts(buffer, tokenName);
-				strbuf_putc(buffer, ' ');
-			}
-		}
-		else if ('(' == cc)
-		{
-			parenthesesLevel++;
-			strbuf_putc(buffer, (char)cc);
-		}
-		else if (')' == cc)
-		{
-			parenthesesLevel--;
-			strbuf_putc(buffer, (char)cc);
-		}
-		else if (isspace(cc))
-			// ignore
-			continue;
-		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
-		else
-			if (cc < 256)
-				// treate as symbol
-				strbuf_putc(buffer, (char)cc);
-			else
-			{
-				message("ignore token %d when parse parentheses", cc);
-				continue;
-			}
-	}
-}
-
-static void readOperatorFunction(STRBUF *funcName)
-{
-	assert(NULL != funcName);
-	strbuf_puts(funcName, "operator");
-
-	BOOL findOper = FALSE;
-	int cc = -1;
-	// never return a line break
-	while (1)
-	{
-		cc = nextToken(NULL, NULL, 1);
-		if (SYMBOL == cc)
-		{
-			strbuf_puts(funcName, token);
-			strbuf_putc(funcName, ' ');
-			findOper = TRUE;
-			continue;
-		}
-		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
-		else if (CHAR_PARENTH_OPEN == cc)
-			if (findOper)
-			{
-				pushbacktoken();
-				break;
-			}
-		findOper = TRUE;
-		if (cc < 100)
-			strbuf_putc(funcName, (char)cc);
-		else if (cc >= C_OPERATE && cc < C_OPERATE_END)
-			strbuf_puts(funcName, OperateName[cc - C_OPERATE]);
-	}
-}
-
-static void getFunctionPointName(STRBUF *tokenName, const STRBUF *functionPointName)
-{
-	// save function point
-	int isCopy = 0;
-	const char *findStart = strbuf_value(functionPointName);
-	while (*(findStart++) != '\0')
-		if (isident(*findStart))
-		{
-			isCopy = 1;
-			strbuf_putc(tokenName, *findStart);
-		}
-		else
-			if (isCopy)
-				break;
-}
-
-int nextToken(const char *interested,
-		int (*reserved)(const char *, int), BOOL ignoreNewLine)
-{
-	int c = nexttoken(interested, reserved);
-
-	switch (c)
-	{
-		case '=':
-		{
-			if (nextChar() == '=')
-				c = C_JUDGE;
-			else
-				pushbackChar();
-			break;
-		}
-		case '!':
-		{
-			if (nextChar() == '=')
-				c = C_NOTJUDGE;
-			else
-				pushbackChar();
-			break;
-		}
-		case '<':
-		{
-			int cc = nextChar();
-			if ('<' == cc)
-				c = C_LEFTSHIFT;
-			else if ('=' == cc)
-				c = C_LESSJUDGE;
-			else
-				pushbackChar();
-
-			break;
-		}
-		case '>':
-		{
-			int cc = nextChar();
-			if ('>' == cc)
-				c = C_RIGHTSHIFT;
-			else if ('=' == cc)
-				c = C_BIGJUDGE;
-			else
-				pushbackChar();
-			break;
-		}
-		default:
-			break;
-	}
-
-	if (ignoreNewLine && CHAR_NEW_LINE == c)
-		return nextToken(interested, reserved, ignoreNewLine);
-	else
-		return c;
 }
 
 static int isident(char c)

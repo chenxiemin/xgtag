@@ -325,6 +325,25 @@ strbuf_trim(STRBUF *sb)
 		*--p = 0;
 	sb->curp = p;
 }
+
+void strbuf_reverse(STRBUF *sb)
+{
+	if (NULL == sb->sbuf || NULL == sb->curp ||
+			sb->curp <= sb->sbuf)
+		return;
+
+	char *start = sb->sbuf;
+	char *end = sb->curp - 1;
+	while (end > start)
+	{
+		char tmp = *start;
+		*start = *end;
+		*end = tmp;
+		start++;
+		end--;
+	}
+}
+
 /*
  * strbuf_fgets: read whole record into string buffer
  *
