@@ -585,6 +585,10 @@ void Cpp(const struct parser_param *param)
 	// clear
 	delAllStatementInfo(&CurrentStatementInfo, param);
 	closetoken();
+	// reset env
+	skipToMatchLevel = 0;
+	isInAssign = FALSE;
+	memset(&directiveInfo, 0, sizeof(directiveInfo));
 }
 
 static void createTags(const struct parser_param *param)
