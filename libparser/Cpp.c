@@ -777,6 +777,11 @@ static void processStatementToken(const struct parser_param *param)
 			// save global variable
 			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
 					prev->lno, NULL);
+		else if (TOKEN_NAME == prev->type &&
+				isInEnum(CurrentStatementInfo))
+			// put enum defination
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+					prev->lno, NULL);
 		else
 		{
 			// treate as ref
