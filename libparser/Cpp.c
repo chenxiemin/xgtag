@@ -77,6 +77,9 @@
 #define setConditionDirective(directiveInfo, state) (\
 		(directiveInfo).isInConditionDirective &= ~(1 << ((directiveInfo).nestLevel - 1)), \
 		(directiveInfo).isInConditionDirective |= ((int)(state)) << ((directiveInfo).nestLevel - 1))
+#define LONGJMP(buf, type, linesave) do { strcpy((buf).file, __FILE__); \
+    if (0 == (buf).line) (buf).line = __LINE__; (buf).lineSource = (linesave); \
+    longjmp((buf.jmpbuffer), (type)); } while(0)
 
 
 typedef enum eTokenType {
@@ -180,7 +183,13 @@ BOOL isInAssign = FALSE;
 // convert operator to string
 const static char OperateName[][4] = { "==", "<=", ">=", "!=", "<<", ">>" };
 // jmpbuf for exception handle
-jmp_buf jmpbuffer;
+static struct JumpBuffer
+{
+    jmp_buf jmpbuffer;
+    int lineSource;
+    char file[255];
+    int line;
+} jmpbuffer;
 
 #ifdef DEBUG
 #define SKIP_STACK_NUM 1024
@@ -284,6 +293,9 @@ static void readParenthesesToken(const struct parser_param *param, STRBUF *buffe
 static void readOperatorFunction(STRBUF *funcName);
 // get tag name of a function point
 static void getFunctionPointName(STRBUF *tokenName, STRBUF *functionPointName);
+// for K&R function prototype, should be int func(foo, bar) int foo; float bar; { }
+// return arguments count, 0 indicates ANSI
+static int checkKnRFunction(tokenInfo *tokenArgs);
 // parse local variable definations in token args
 // then add in to list
 static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead);
@@ -545,7 +557,7 @@ static inline tokenType getTokenType(int cc)
 	tokenType type = TOKEN_NONE;
 	if (cc == SYMBOL)
 		type = TOKEN_NAME;
-	else if (cc >= START_WORD < START_SHARP)
+	else if (cc >= START_WORD && cc < START_SHARP)
 		type = TOKEN_KEYWORD;
 	else
 		type = TOKEN_UNKNOWN;
@@ -572,13 +584,17 @@ void Cpp(const struct parser_param *param)
 	newStatementInfo(&CurrentStatementInfo);
 
 	// init jmpbuf
-	int except = setjmp(jmpbuffer);
+	int except = setjmp(jmpbuffer.jmpbuffer);
 	if (0 == except)
 		// parse file to create tags
 		createTags(param);
 	else if (EXCEPTION_EOF == except)
+    {
 		// exception handle
-		warning("Unexpected end of file %s", param->file);
+		warning("<%s %d>: Unexpected end of file %s at line %d", jmpbuffer.file,
+                jmpbuffer.line, param->file, jmpbuffer.lineSource);
+        memset(&jmpbuffer, 0, sizeof(jmpbuffer));
+    }
 	else
 		warning("Unknown exception");
 
@@ -877,6 +893,7 @@ static void skipToMatch(const struct parser_param *param,
 	skipStackPush(match1, lineno);
 #endif
 	skipToMatchLevel++;
+    int lineSave = lineno;
 
 	int level = 1;
 	int cc = -1;
@@ -895,7 +912,7 @@ static void skipToMatch(const struct parser_param *param,
 		}
 		else if (EOF == cc)
 			// trigger eof exception
-			longjmp(jmpbuffer, EXCEPTION_EOF);
+			LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 		else
 			; // ignore
 	}
@@ -916,6 +933,7 @@ static void parseInitializer(const struct parser_param *param, StatementInfo *si
 	// treate all of the SYMBOLs as ref before a ';'
 	int cc = -1;
 	BOOL shouldBreak = FALSE;
+    int lineSave = lineno;
 	while (1)
 	{
 		cc = nextTokenStripMacro(param);
@@ -942,7 +960,7 @@ static void parseInitializer(const struct parser_param *param, StatementInfo *si
 				skipToMatch(param, '{', '}');
 				break;
 			case EOF:
-				longjmp(jmpbuffer, EXCEPTION_EOF);
+				LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 			default:
 				break;
 		}
@@ -958,6 +976,7 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
 {
 	assert(NULL != param && NULL != si);
 
+    int lineSave = lineno;
 	tokenInfo *prev = prevToken(si, 1);
 	tokenInfo *prev2 = prevToken(si, 2);
 	if ((prev->type == TOKEN_NAME || prev->type == TOKEN_KEYWORD) &&
@@ -971,17 +990,29 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
 	else if ((prev->type == TOKEN_NAME || TOKEN_PAREN_NAME == prev->type)
 			//&& (prev2->type == TOKEN_NAME || TOKEN_KEYWORD == prev2->type)
 			)
-	{
-		// read args
-		if (TOKEN_NAME == prev2->type || TOKEN_KEYWORD == prev2->type)
-			readArgs(param, strbuf_value(getTokenName(prev)),
-					strbuf_value(getTokenName(prev2)),
-					activeToken(CurrentStatementInfo));
-		else
-			readArgs(param, strbuf_value(getTokenName(prev)), NULL, activeToken(CurrentStatementInfo));
-		// set declaration
-		si->declaration = DECL_FUNCTION;
-	}
+    {
+        // read args
+        if (TOKEN_NAME == prev2->type || TOKEN_KEYWORD == prev2->type)
+            readArgs(param, strbuf_value(getTokenName(prev)),
+                    strbuf_value(getTokenName(prev2)), 
+                    activeToken(CurrentStatementInfo));
+        else
+            readArgs(param, strbuf_value(getTokenName(prev)), NULL, activeToken(CurrentStatementInfo));
+        // set declaration
+        si->declaration = DECL_FUNCTION;
+        
+        if ((TOKEN_NAME == prev2->type || TOKEN_KEYWORD == prev2->type) &&
+                TOKEN_NAME == prev->type && (NULL == strchr("{},=;", peekc(0))) &&
+                !isInScope(CurrentStatementInfo, DECL_FUNCTION))
+        {
+            // skip K&R arguments prototype
+            tokenInfo *active = activeToken(CurrentStatementInfo);
+            int knr = checkKnRFunction(active);
+            if (0 != knr)
+                while (knr-- > 0)
+                    skipStatement(param, CHAR_SEMICOLON);
+        }
+    }
 	else
 	{
 		// treate all SYMBOL as ref
@@ -992,7 +1023,7 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
 		{
 			cc = nextToken(interested, cpp_reserved_word, 0);
 			if (EOF == cc)
-				longjmp(jmpbuffer, EXCEPTION_EOF);
+				LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 			else if ('(' == cc)
 				parenthesesLevel++;
 			else if (')' == cc)
@@ -1008,6 +1039,7 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
 static void processInherit(const struct parser_param *param)
 {
 	int cc = -1;
+    int lineSave = lineno;
 	while (1)
 	{
 		cc = nextTokenStripMacro(param);
@@ -1024,7 +1056,7 @@ static void processInherit(const struct parser_param *param)
 				return;
 			}
 			case EOF:
-				longjmp(jmpbuffer, EXCEPTION_EOF);
+				LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 			default:
 				break;
 		}
@@ -1034,6 +1066,7 @@ static void processInherit(const struct parser_param *param)
 static void skipStatement(const struct parser_param *param, char endChar)
 {
 	int cc = -1;
+    int lineSave = lineno;
 
 	while (1)
 	{
@@ -1048,7 +1081,7 @@ static void skipStatement(const struct parser_param *param, char endChar)
 		else if (endChar == cc)
 			return;
 		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
+			LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 		else
 			;// just ignore
 	}
@@ -1077,6 +1110,7 @@ static void readParenthesesToken(const struct parser_param *param, STRBUF *buffe
 	int len = 0;
 	int cc = 0;
 	int parenthesesLevel = 1;
+    int lineSave = lineno;
 	strbuf_putc(buffer, CHAR_PARENTH_OPEN);
 
 	while (parenthesesLevel > 0)
@@ -1087,6 +1121,9 @@ static void readParenthesesToken(const struct parser_param *param, STRBUF *buffe
 		{
 			strbuf_puts(buffer, token);
 			strbuf_putc(buffer, ' ');
+            // put symbol if necessary
+			if (NULL == find(CurrentStatementInfo->localVariables, token))
+				PUT_SYMS(param, PARSER_REF_SYM, token, lineno, sp);
 		}
 		else if (IS_RESERVED_WORD(cc))
 		{
@@ -1118,7 +1155,7 @@ static void readParenthesesToken(const struct parser_param *param, STRBUF *buffe
 		else if (isspace(cc))
 			continue; // ignore
 		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
+			LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 		else if (cc < 256) // remain last process
 			strbuf_putc(buffer, (char)cc); // anyway char treate as symbol
 		else
@@ -1133,6 +1170,7 @@ static void readOperatorFunction(STRBUF *funcName)
 
 	BOOL findOper = FALSE;
 	int cc = -1;
+    int lineSave = lineno;
 	// never return a line break
 	while (1)
 	{
@@ -1145,7 +1183,7 @@ static void readOperatorFunction(STRBUF *funcName)
 			continue;
 		}
 		else if (EOF == cc)
-			longjmp(jmpbuffer, EXCEPTION_EOF);
+			LONGJMP(jmpbuffer, EXCEPTION_EOF, lineSave);
 		else if (CHAR_PARENTH_OPEN == cc)
 			if (findOper)
 			{
@@ -1173,7 +1211,75 @@ static void getFunctionPointName(STRBUF *tokenName, STRBUF *functionPointName)
 		}
 		else
 			if (isCopy)
-				break;
+            {
+                // check keyword
+                if (cpp_reserved_word(strbuf_value(tokenName),
+                            strlen(strbuf_value(tokenName))))
+                {
+                    strbuf_reset(tokenName);
+                    isCopy = 0;
+                }
+                else
+                    break;
+            }
+}
+
+static int checkKnRFunction(tokenInfo *tokenArgs)
+{
+    if (NULL == tokenArgs || TOKEN_ARGS != tokenArgs->type)
+        return 0;
+
+    int knrCount = 0;
+    const char *args = strbuf_value(tokenArgs->name);
+    BOOL acceptIdent = FALSE;
+    BOOL findParenth = FALSE;
+
+    do
+    {
+        if (CHAR_PARENTH_OPEN == *args)
+            findParenth = TRUE;
+        if (!findParenth)
+            continue;
+
+        if (isident(*args))
+            // accept ident by skipping
+            if (!acceptIdent)
+                while ('\0' != *(args + 1))
+                {
+                    if (!isident(*(args + 1)))
+                    {
+                        // todo check first reserved word
+                        acceptIdent = TRUE;
+                        break;
+                    }
+                    args++;
+                }
+            else
+                return 0;
+        else if (CHAR_COMMA == *args)
+        {
+            if (acceptIdent)
+                knrCount++;
+            acceptIdent = FALSE;
+        }
+        else if (isspace(*args))
+            ; // just ignore
+        else if (CHAR_PARENTH_CLOSE == *args)
+        {
+            if (acceptIdent)
+                knrCount++;
+            acceptIdent = FALSE;
+        }
+        else
+            if (acceptIdent)
+                return 0;
+    } while ('\0' != *(++args));
+
+    // last param
+    if (acceptIdent)
+        knrCount++;
+
+    return knrCount;
 }
 
 static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead)
@@ -1224,6 +1330,9 @@ static int cppNextToken(const struct parser_param *param)
 	{
 		switch (cc)
 		{
+        case '*':
+            needContinue = TRUE;
+            break;
 		case '[':
 			skipToMatch(param, '[', ']');
 			needContinue = TRUE;
