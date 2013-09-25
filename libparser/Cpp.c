@@ -70,7 +70,8 @@
 		DECL_STRUCT != (pStatementInfo)->scopeParent->declaration && \
 		DECL_UNION != (pStatementInfo)->scopeParent->declaration))
 // do we under a Condition Directive of #else, #elif?
-#define isConditionDirective(directiveInfo) ((directiveInfo).isInConditionDirective > 0)
+#define isConditionDirective(directiveInfo) \
+    ((directiveInfo).isInConditionDirective > 0)
 #define setConditionDirective(directiveInfo, state) do {\
 		(directiveInfo).isInConditionDirective &= \
             ~(1 << ((directiveInfo).nestLevel - 1)); \
@@ -323,7 +324,6 @@ static inline isDefinableKeyword(tokenType type)
 	return type == TOKEN_KEYWORD || type == TOKEN_NAME;
 }
 
-// put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
 static inline void PUT_SYMS(const struct parser_param *param,
 		int type, const char *tag, int lno, const char *line)
 {
@@ -555,7 +555,8 @@ static void delStatementInfo(StatementInfo **ppCurrentStatementInfo,
 	}
 }
 
-static void delAllStatementInfo(StatementInfo **ppCurrentStatementInfo, const struct parser_param *param)
+static void delAllStatementInfo(StatementInfo **ppCurrentStatementInfo,
+        const struct parser_param *param)
 {
 	while (NULL != *ppCurrentStatementInfo)
 		delStatementInfo(ppCurrentStatementInfo, param);
@@ -690,8 +691,8 @@ static void processBraceOpen(const struct parser_param *param)
 		// save function defination if necessarey
 		if (TOKEN_NAME == prev2->type)
 		{
-			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev2)), prev2->lno, 
-					strbuf_value(getTokenName(prev)));
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev2)),
+                    prev2->lno, strbuf_value(getTokenName(prev)));
 			tokenArgsBuf = strbuf_open(0);
 			strbuf_puts(tokenArgsBuf, strbuf_value(getTokenName(prev)));
 		}
@@ -743,7 +744,8 @@ static void processBraceClose(const struct parser_param *param)
 	if (SYMBOL == prev->cc && isInEnum(CurrentStatementInfo))
 	{
 		// save
-		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+                prev->lno, NULL);
 		resetToken(prev);
 	}
 
@@ -763,7 +765,8 @@ static void processStatementToken(const struct parser_param *param)
 		if (TOKEN_NAME == prev->type &&
 				CurrentStatementInfo->isInStructureBody)
 			// struct variable define
-			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+			PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+                    prev->lno, NULL);
 		else if (TOKEN_PAREN_NAME == prev2->type && TOKEN_ARGS == prev->type)
 		{
 			// save global function point
@@ -801,7 +804,8 @@ static void processStatementToken(const struct parser_param *param)
 		}
 	else if (TOKEN_NAME == prev->type && isInEnum(CurrentStatementInfo))
 		// save enum member
-		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)), prev->lno, NULL);
+		PUT_SYMS(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+                prev->lno, NULL);
 	else if (TOKEN_NAME == prev->type && CurrentStatementInfo->isInTypedef)
 	{
 		// save typedef
@@ -822,24 +826,25 @@ static void processStatementToken(const struct parser_param *param)
 					!CurrentStatementInfo->isInExtern)
 			{
 				// save local variable as necessary
-				append(&(CurrentStatementInfo->localVariables), getTokenName(prev));
+				append(&(CurrentStatementInfo->localVariables),
+                        getTokenName(prev));
 				// add token type reference
 				if (TOKEN_NAME == prev2->type)
-					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-							prev2->lno, NULL);
+					PUT_SYMS(param, PARSER_REF_SYM,
+                            strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
 			}
 			else
 			{
 				if (TOKEN_NAME == prev->type && NULL ==
 						find(CurrentStatementInfo->localVariables,
 							strbuf_value(getTokenName(prev))))
-					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev)),
-							prev->lno, NULL);
+					PUT_SYMS(param, PARSER_REF_SYM,
+                            strbuf_value(getTokenName(prev)), prev->lno, NULL);
 				if (TOKEN_NAME == prev2->type && NULL ==
 						find(CurrentStatementInfo->localVariables,
 							strbuf_value(getTokenName(prev2))))
-					PUT_SYMS(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
-							prev2->lno, NULL);
+					PUT_SYMS(param, PARSER_REF_SYM,
+                            strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
 			}
 		}
 		else
@@ -988,7 +993,8 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
                     strbuf_value(getTokenName(prev2)), 
                     activeToken(CurrentStatementInfo));
         else
-            readArgs(param, strbuf_value(getTokenName(prev)), NULL, activeToken(CurrentStatementInfo));
+            readArgs(param, strbuf_value(getTokenName(prev)),
+                    NULL, activeToken(CurrentStatementInfo));
         // set declaration
         si->declaration = DECL_FUNCTION;
         
@@ -1358,7 +1364,8 @@ static int cppNextToken(const struct parser_param *param)
 			// read class inherit if necessary
 			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
 			if ((DECL_CLASS == CurrentStatementInfo->declaration ||
-						DECL_STRUCT == CurrentStatementInfo->declaration) && SYMBOL == prev->cc)
+                    DECL_STRUCT == CurrentStatementInfo->declaration) &&
+                    SYMBOL == prev->cc)
 				processInherit(param);
 			else if (TOKEN_ARGS == prev->type)
 				// skip initializer list
@@ -1530,7 +1537,8 @@ static int nextTokenStripMacro(const struct parser_param *param)
 			case SHARP_SCCS:
 			{
 				int c = 0;
-				while ((c = nextToken(interested, cpp_reserved_word, 0)) != EOF && c != '\n')
+				while ((c = nextToken(interested, cpp_reserved_word,
+                                0)) != EOF && c != '\n')
 					;
 				break;
 			}
