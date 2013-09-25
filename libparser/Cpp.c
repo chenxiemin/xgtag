@@ -55,15 +55,12 @@
 
 // max num to save token in StatementInfo
 #define SAVETOKENNUM 3
-
 #define EXCEPTION_EOF 1
 
-#define isKeyword(token) (NULL != (token) && (token)->type == TOKEN_KEYWORD)
 // Is current StatementInfo under the Enum body
 #define isInEnum(pStatementInfo) (\
 		NULL != (pStatementInfo) && NULL != (pStatementInfo)->scopeParent && \
 		DECL_ENUM == (pStatementInfo)->scopeParent->declaration)
-#define isType(pStatementInfo, type) ((type) == (pStatementInfo)->declaration)
 // Is current statementinfo under the global
 #define isGlobal(pStatementInfo) (\
 		NULL == (pStatementInfo) || \
@@ -74,9 +71,11 @@
 		DECL_UNION != (pStatementInfo)->scopeParent->declaration))
 // do we under a Condition Directive of #else, #elif?
 #define isConditionDirective(directiveInfo) ((directiveInfo).isInConditionDirective > 0)
-#define setConditionDirective(directiveInfo, state) (\
-		(directiveInfo).isInConditionDirective &= ~(1 << ((directiveInfo).nestLevel - 1)), \
-		(directiveInfo).isInConditionDirective |= ((int)(state)) << ((directiveInfo).nestLevel - 1))
+#define setConditionDirective(directiveInfo, state) do {\
+		(directiveInfo).isInConditionDirective &= \
+            ~(1 << ((directiveInfo).nestLevel - 1)); \
+		(directiveInfo).isInConditionDirective |= \
+            ((int)(state)) << ((directiveInfo).nestLevel - 1); } while(0)
 #define LONGJMP(buf, type, linesave) do { strcpy((buf).file, __FILE__); \
     if (0 == (buf).line) (buf).line = __LINE__; (buf).lineSource = (linesave); \
     longjmp((buf.jmpbuffer), (type)); } while(0)
@@ -103,7 +102,6 @@ typedef enum eTokenType {
 typedef struct {
 	tokenType type;
 	int cc; // type returned by parser
-	// char name[MAXTOKEN]; // token name
 	STRBUF *name;
 	int lno;
 } tokenInfo;
@@ -131,9 +129,8 @@ typedef struct StrbufListT {
 	STRBUF *name;
 	struct StrbufListT *next;
 } StrbufList;
-/*
- * One StatementInfo instance means that we under a { } Context
- */
+
+// One StatementInfo instance means that we under a { } Context
 typedef struct StatementInfoT {
 	// the direct parent, but it may not contain scope info like
 	// if () // this is a StatementInfo1
@@ -176,12 +173,6 @@ struct DirectiveInfo {
 	int nestLevel; // nest level of condition macro
 } directiveInfo = { 0 };
 
-int skipToMatchLevel = 0; // the level of skipToMatch()
-static StatementInfo *CurrentStatementInfo = NULL;
-// do we under the assign state
-BOOL isInAssign = FALSE;
-// convert operator to string
-const static char OperateName[][4] = { "==", "<=", ">=", "!=", "<<", ">>" };
 // jmpbuf for exception handle
 static struct JumpBuffer
 {
@@ -190,6 +181,13 @@ static struct JumpBuffer
     char file[255];
     int line;
 } jmpbuffer;
+
+int skipToMatchLevel = 0; // the level of skipToMatch()
+static StatementInfo *CurrentStatementInfo = NULL;
+// do we under the assign state
+BOOL isInAssign = FALSE;
+// convert operator to string
+const static char OperateName[][4] = { "==", "<=", ">=", "!=", "<<", ">>" };
 
 #ifdef DEBUG
 #define SKIP_STACK_NUM 1024
@@ -214,6 +212,146 @@ void skipStackPop()
 }
 #endif
 
+static inline STRBUF *getTokenName(tokenInfo *token)
+{
+	assert(NULL != token && NULL != token->name);
+	return token->name;
+}
+
+// reset a token
+static inline void resetToken(tokenInfo *pToken)
+{
+	assert(NULL != pToken);
+
+	pToken->type = 0;
+	pToken->cc = -1;
+	pToken->lno = 0;
+	if (NULL == pToken->name)
+		pToken->name = strbuf_open(0);
+	strbuf_reset(pToken->name);
+}
+
+// set active token in StatementInfo
+static inline void setToken(tokenInfo *currentToken, tokenType type,
+		const char *buffer, int cc, int lno)
+{
+    assert(NULL != currentToken);
+
+	currentToken->type = type;
+	strbuf_reset(getTokenName(currentToken));
+	if (type == TOKEN_NAME)
+		strbuf_puts(getTokenName(currentToken), buffer);
+	currentToken->cc = cc;
+	currentToken->lno = lno;
+}
+
+// get [prev] index token in StatementInfo
+static inline tokenInfo *prevToken(StatementInfo *pInfo, int prev)
+{
+	assert(prev < SAVETOKENNUM);
+
+	return &(pInfo->saveToken[(pInfo->tokenIndex +
+                SAVETOKENNUM - prev) % SAVETOKENNUM]);
+}
+
+// reset StatementInfo
+static inline void resetStatementInfo(StatementInfo *pInfo)
+{
+	pInfo->declaration = DECL_NONE;
+	pInfo->isInTypedef = FALSE;
+	pInfo->isInExtern = FALSE;
+	pInfo->isInStructureBody = FALSE;
+}
+
+static inline tokenInfo *activeToken(StatementInfo *pInfo)
+{
+	return &(pInfo->saveToken[pInfo->tokenIndex]);
+}
+
+// foward a token in StatementInfo
+static inline void advanceToken(StatementInfo *pInfo)
+{
+	pInfo->tokenIndex = (pInfo->tokenIndex + 1) % SAVETOKENNUM;
+	resetToken(activeToken(pInfo));
+}
+
+// reward a token in StatementInfo
+static inline void reverseToken(StatementInfo *si)
+{
+	resetToken(activeToken(si));
+	si->tokenIndex = (si->tokenIndex + SAVETOKENNUM - 1) % SAVETOKENNUM;
+}
+
+// reset prevCount(s) tokenInfo in StatementInfo
+static inline void resetStatementToken(StatementInfo *pInfo, int prevCount)
+{
+	assert(prevCount < SAVETOKENNUM);
+
+	int i = 0;
+	for (; i < prevCount + 1; i++)
+		resetToken(prevToken(pInfo, i));
+}
+
+// nest check declaration in StatementInfo.scopeParent
+static inline BOOL isInScope(StatementInfo *si, declType scope)
+{
+	if (NULL == si || NULL == si->scopeParent)
+		return FALSE;
+	else if (scope == si->scopeParent->declaration)
+		return TRUE;
+	else
+		return isInScope(si->scopeParent, scope);
+}
+
+// help function to convert cc to tokenType
+static inline tokenType getTokenType(int cc)
+{
+	tokenType type = TOKEN_NONE;
+	if (cc == SYMBOL)
+		type = TOKEN_NAME;
+	else if (cc >= START_WORD && cc < START_SHARP)
+		type = TOKEN_KEYWORD;
+	else
+		type = TOKEN_UNKNOWN;
+
+	return type;
+}
+
+// if token could be treate as a variable type
+static inline isDefinableKeyword(tokenType type)
+{
+	return type == TOKEN_KEYWORD || type == TOKEN_NAME;
+}
+
+// put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
+static inline void PUT_SYMS(const struct parser_param *param,
+		int type, const char *tag, int lno, const char *line)
+{
+	param->put(type, tag, lno, curfile, line, param->arg);
+}
+
+// is identical char
+static inline int isident(char c)
+{
+	// '~" for c++ destructor
+	return isalnum(c) || c == '_' || c == '~';
+}
+
+static inline void pushConditionDirective(struct DirectiveInfo *directiveInfo)
+{
+	directiveInfo->nestLevel++;
+}
+
+static inline void popConditionDirective(struct DirectiveInfo *directiveInfo)
+{
+	if (directiveInfo->nestLevel <= 0)
+		return;
+
+	setConditionDirective(*directiveInfo, FALSE);
+	directiveInfo->nestLevel--;
+}
+
+// parser file to generate tags
 static void createTags(const struct parser_param *param);
 // malloc new StatementInfo
 // ppCurrentStatementInfo will be changed
@@ -224,36 +362,6 @@ static void delStatementInfo(StatementInfo **ppCurrentStatementInfo,
 // delete all StatementInfo
 static void delAllStatementInfo(StatementInfo **ppCurrentStatementInfo,
 		const struct parser_param *param);
-// get active token in StatementInfo
-static inline tokenInfo *activeToken(StatementInfo *pInfo);
-// foward a token in StatementInfo
-static inline void advanceToken(StatementInfo *pInfo);
-// reward a token in StatementInfo
-static inline void reverseToken(StatementInfo *si);
-// get [prev] index token in StatementInfo
-static inline tokenInfo *prevToken(StatementInfo *pInfo, int prev);
-// set active token in StatementInfo
-static inline void setToken(StatementInfo *si, tokenType type,
-		const char *buffer, int cc, int lno);
-// reset prevCount(s) tokenInfo in StatementInfo
-static inline void resetStatementToken(StatementInfo *pInfo, int prevCount);
-// reset StatementInfo
-static inline void resetStatementInfo(StatementInfo *pInfo);
-// reset a token
-static inline void resetToken(tokenInfo *pToken);
-static inline STRBUF *getTokenName(tokenInfo *token)
-{
-	assert(NULL != token && NULL != token->name);
-
-	return token->name;
-}
-// nest check declaration in StatementInfo.scopeParent
-static inline BOOL isInScope(StatementInfo *si, declType scope);
-// help function to convert cc to tokenType
-static inline tokenType getTokenType(int cc);
-// if token could be treate as a variable type
-static inline isDefinableKeyword(tokenType type);
-
 // wrap nexttoken()
 // preprocess a primitive token
 // this will never ever return a preprocess
@@ -301,22 +409,6 @@ static int checkKnRFunction(tokenInfo *tokenArgs);
 static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead);
 // get token name by token id
 static const char *getReservedToken(int token);
-// is identical char
-static inline int isident(char c);
-
-static inline void pushConditionDirective(struct DirectiveInfo *directiveInfo)
-{
-	directiveInfo->nestLevel++;
-}
-
-static inline void popConditionDirective(struct DirectiveInfo *directiveInfo)
-{
-	if (directiveInfo->nestLevel <= 0)
-		return;
-
-	setConditionDirective(*directiveInfo, FALSE);
-	directiveInfo->nestLevel--;
-}
 
 static StrbufList *find(StrbufList *head, const char *value)
 {
@@ -372,13 +464,6 @@ static StrbufList *deleteAfter(StrbufList *tail)
 		strbuf_close(del->name);
 		free(del);
 	}
-}
-
-// put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
-static inline void PUT_SYMS(const struct parser_param *param,
-		int type, const char *tag, int lno, const char *line)
-{
-	param->put(type, tag, lno, curfile, line, param->arg);
 }
 
 static StatementInfo *newStatementInfo(StatementInfo **ppCurrentStatementInfo)
@@ -476,100 +561,6 @@ static void delAllStatementInfo(StatementInfo **ppCurrentStatementInfo, const st
 		delStatementInfo(ppCurrentStatementInfo, param);
 }
 
-static inline tokenInfo *activeToken(StatementInfo *pInfo)
-{
-	return &(pInfo->saveToken[pInfo->tokenIndex]);
-}
-
-static inline void advanceToken(StatementInfo *pInfo)
-{
-	pInfo->tokenIndex = (pInfo->tokenIndex + 1) % SAVETOKENNUM;
-	resetToken(activeToken(pInfo));
-}
-
-static inline void reverseToken(StatementInfo *si)
-{
-	resetToken(activeToken(si));
-	si->tokenIndex = (si->tokenIndex + SAVETOKENNUM - 1) % SAVETOKENNUM;
-}
-
-static inline tokenInfo *prevToken(StatementInfo *pInfo, int prev)
-{
-	assert(prev < SAVETOKENNUM);
-
-	return &(pInfo->saveToken[(pInfo->tokenIndex + SAVETOKENNUM - prev) % SAVETOKENNUM]);
-}
-
-static inline void setToken(StatementInfo *si, tokenType type,
-		const char *buffer, int cc, int lno)
-{
-	// get active token
-	tokenInfo *currentToken = activeToken(si);
-	currentToken->type = type;
-	strbuf_reset(getTokenName(currentToken));
-	if (type == TOKEN_NAME)
-		strbuf_puts(getTokenName(currentToken), buffer);
-	currentToken->cc = cc;
-	currentToken->lno = lno;
-}
-
-static inline void resetToken(tokenInfo *pToken)
-{
-	assert(NULL != pToken);
-
-	pToken->type = 0;
-	pToken->cc = -1;
-	pToken->lno = 0;
-	if (NULL == pToken->name)
-		pToken->name = strbuf_open(0);
-	strbuf_reset(pToken->name);
-}
-
-static inline void resetStatementToken(StatementInfo *pInfo, int prevCount)
-{
-	assert(prevCount < SAVETOKENNUM);
-
-	int i = 0;
-	for (; i < prevCount + 1; i++)
-		resetToken(prevToken(pInfo, i));
-}
-
-static inline void resetStatementInfo(StatementInfo *pInfo)
-{
-	pInfo->declaration = DECL_NONE;
-	pInfo->isInTypedef = FALSE;
-	pInfo->isInExtern = FALSE;
-	pInfo->isInStructureBody = FALSE;
-}
-
-static inline BOOL isInScope(StatementInfo *si, declType scope)
-{
-	if (NULL == si || NULL == si->scopeParent)
-		return FALSE;
-	else if (scope == si->scopeParent->declaration)
-		return TRUE;
-	else
-		return isInScope(si->scopeParent, scope);
-}
-
-static inline tokenType getTokenType(int cc)
-{
-	tokenType type = TOKEN_NONE;
-	if (cc == SYMBOL)
-		type = TOKEN_NAME;
-	else if (cc >= START_WORD && cc < START_SHARP)
-		type = TOKEN_KEYWORD;
-	else
-		type = TOKEN_UNKNOWN;
-
-	return type;
-}
-
-static inline isDefinableKeyword(tokenType type)
-{
-	return type == TOKEN_KEYWORD || type == TOKEN_NAME;
-}
-
 // Cpp: read C++ file and pickup tag entries.
 void Cpp(const struct parser_param *param)
 {
@@ -616,7 +607,7 @@ static void createTags(const struct parser_param *param)
 	while ((cc = cppNextToken(param)) != EOF)
 	{
 		// save new token if is not brace
-		setToken(CurrentStatementInfo, getTokenType(cc),
+		setToken(activeToken(CurrentStatementInfo), getTokenType(cc),
 				token, cc, lineno);
 
 		switch (cc)
@@ -1573,7 +1564,8 @@ static int nextTokenStripMacro(const struct parser_param *param)
 				break;
 			case CHAR_NEW_LINE:
 			{
-				if (directiveInfo.shouldIgnoreMacro && !isConditionDirective(directiveInfo))
+				if (directiveInfo.shouldIgnoreMacro &&
+                        !isConditionDirective(directiveInfo))
 				{
 					directiveInfo.shouldIgnoreMacro = FALSE;
 					directiveInfo.acceptSymbolAsDefine = TRUE;
@@ -1810,11 +1802,5 @@ static const char *getReservedToken(int token)
 			return wordlist[i].name;
 
 	return NULL;
-}
-
-static int isident(char c)
-{
-	// '~" for c++ destructor
-	return isalnum(c) || c == '_' || c == '~';
 }
 
