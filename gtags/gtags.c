@@ -55,8 +55,9 @@
 #include "parser.h"
 #include "const.h"
 
-#include "/home/cxm/src/global/sqlite3.h"
+// #include "/home/cxm/src/global/sqlite3.h"
 #include <sys/stat.h>
+#include <errno.h>
 
 static void usage(void);
 static void help(void);
@@ -1032,6 +1033,11 @@ createtags(const char *dbpath, const char *root)
 	struct put_func_data data;
 	int openflags, flags, seqno;
 	const char *path;
+    char realPath[MAXPATHLEN + 1];
+    char normalPath[MAXPATHLEN + 1];
+    char rootSlash[MAXPATHLEN + 1];
+
+    sprintf(rootSlash, "%s/", root);
 
 	tim = statistics_time_start("Time of creating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
 	if (vflag)
@@ -1068,6 +1074,28 @@ createtags(const char *dbpath, const char *root)
 				gpath_put(path, GPATH_OTHER);
 			continue;
 		}
+#if 1
+        // check whether path exist
+        char *res = realpath(path, realPath);
+        if (NULL == res)
+        {
+            warning("read link failed %s to %s", path, realPath);
+            continue;
+        }
+        res = normalize(realPath, rootSlash, dbpath, normalPath, MAXPATHLEN);
+        if (NULL == res)
+        {
+            warning("normailize path failed %s to %s", path, realPath);
+            continue;
+        }
+        // always use real path instead
+        if (NULL != gpath_path2fid(normalPath, NULL))
+        {
+            warning("duplicated symbol link deprecated: %s", path);
+            continue;
+        }
+        path = normalPath;
+#endif
 		gpath_put(path, GPATH_SOURCE);
 		data.fid = gpath_path2fid(path, NULL);
 		if (data.fid == NULL)
