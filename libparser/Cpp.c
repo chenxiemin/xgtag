@@ -407,8 +407,6 @@ static int checkKnRFunction(tokenInfo *tokenArgs);
 // parse local variable definations in token args
 // then add in to list
 static void parseVarsInTokenArgs(STRBUF *tokenArgs, StrbufList **ppHead);
-// get token name by token id
-static const char *getReservedToken(int token);
 
 static StrbufList *find(StrbufList *head, const char *value)
 {
@@ -1124,12 +1122,9 @@ static void readParenthesesToken(const struct parser_param *param, STRBUF *buffe
 		}
 		else if (IS_RESERVED_WORD(cc))
 		{
-			const char *tokenName = getReservedToken(cc);
-			if (NULL != tokenName && strlen(tokenName) > 0)
-			{
-				strbuf_puts(buffer, tokenName);
-				strbuf_putc(buffer, ' ');
-			}
+            // put keyword
+			strbuf_puts(buffer, token);
+			strbuf_putc(buffer, ' ');
 		}
 		else if ('(' == cc)
 		{
@@ -1653,162 +1648,5 @@ int nextToken(const char *interested,
 		return nextToken(interested, reserved, ignoreNewLine);
 	else
 		return c;
-}
-
-static const char *getReservedToken(int token)
-{
-	static struct keyword wordlist[] =
-	{
-		{""}, {""},
-		{"::", CPP_WCOLON},
-		{"asm", CPP_ASM},
-		{""}, {""}, {""},
-		{"do", CPP_DO},
-		{"for", CPP_FOR},
-		{""}, {""}, {""},
-		{"##", SHARP_SHARP},
-		{"int", CPP_INT},
-		{""},
-		{"const", CPP_CONST},
-		{"struct", CPP_STRUCT},
-		{"#assert", SHARP_ASSERT},
-		{"continue", CPP_CONTINUE},
-		{""},
-		{"const_cast", CPP_CONST_CAST},
-		{"static", CPP_STATIC},
-		{"virtual", CPP_VIRTUAL},
-		{"unsigned", CPP_UNSIGNED},
-		{"goto", CPP_GOTO},
-		{"__asm", CPP_ASM},
-		{"static_cast", CPP_STATIC_CAST},
-		{"__asm__", CPP_ASM},
-		{"__signed", CPP_SIGNED},
-		{"auto", CPP_AUTO},
-		{"__signed__", CPP_SIGNED},
-		{"__attribute", CPP___ATTRIBUTE__},
-		{""},
-		{"__attribute__", CPP___ATTRIBUTE__},
-		{"#unassert", SHARP_UNASSERT},
-		{"false", CPP_FALSE},
-		{"#error", SHARP_ERROR},
-		{"mutable", CPP_MUTABLE},
-		{"try", CPP_TRY},
-		{"case", CPP_CASE},
-		{""},
-		{"inline", CPP_INLINE},
-		{""},
-		{"volatile", CPP_VOLATILE},
-		{"namespace", CPP_NAMESPACE},
-		{"throw", CPP_THROW},
-		{"export", CPP_EXPORT},
-		{""},
-		{"new", CPP_NEW},
-		{""},
-		{"#else", SHARP_ELSE},
-		{"return", CPP_RETURN},
-		{""},
-		{"__P", CPP___P},
-		{""}, {""},
-		{"signed", CPP_SIGNED},
-		{""},
-		{"__thread", CPP___THREAD},
-		{"char", CPP_CHAR},
-		{"catch", CPP_CATCH},
-		{"extern", CPP_EXTERN},
-		{"__const", CPP_CONST},
-		{"#include", SHARP_INCLUDE},
-		{"__const__", CPP_CONST},
-		{"#elif", SHARP_ELIF},
-		{"#undef", SHARP_UNDEF},
-		{"wchar_t", CPP_WCHAR_T},
-		{"#include_next", SHARP_INCLUDE_NEXT},
-		{""},
-		{"using", CPP_USING},
-		{"#ident", SHARP_IDENT},
-		{""}, {""},
-		{"protected", CPP_PROTECTED},
-		{"union", CPP_UNION},
-		{"delete", CPP_DELETE},
-		{"#pragma", SHARP_PRAGMA},
-		{"__inline", CPP_INLINE},
-		{""},
-		{"__inline__", CPP_INLINE},
-		{"#endif", SHARP_ENDIF},
-		{"#import", SHARP_IMPORT},
-		{"register", CPP_REGISTER},
-		{"long", CPP_LONG},
-		{"#sccs", SHARP_SCCS},
-		{"sizeof", CPP_SIZEOF},
-		{""},
-		{"#if", SHARP_IF},
-		{""},
-		{"class", CPP_CLASS},
-		{""},
-		{"#ifndef", SHARP_IFNDEF},
-		{"template", CPP_TEMPLATE},
-		{""}, {""}, {""},
-		{"if", CPP_IF},
-		{""},
-		{"else", CPP_ELSE},
-		{"__volatile", CPP_VOLATILE},
-		{"friend", CPP_FRIEND},
-		{"__volatile__", CPP_VOLATILE},
-		{""},
-		{"this", CPP_THIS},
-		{"short", CPP_SHORT},
-		{"reinterpret_cast", CPP_REINTERPRET_CAST},
-		{"dynamic_cast", CPP_DYNAMIC_CAST},
-		{"#warning", SHARP_WARNING},
-		{""}, {""}, {""},
-		{"default", CPP_DEFAULT},
-		{"explicit", CPP_EXPLICIT},
-		{"enum", CPP_ENUM},
-		{"break", CPP_BREAK},
-		{"double", CPP_DOUBLE},
-		{""}, {""},
-		{"void", CPP_VOID},
-		{""},
-		{"public", CPP_PUBLIC},
-		{""}, {""},
-		{"true", CPP_TRUE},
-		{""},
-		{"typeid", CPP_TYPEID},
-		{"typedef", CPP_TYPEDEF},
-		{"typename", CPP_TYPENAME},
-		{""}, {""}, {""}, {""},
-		{"__extension__", CPP___EXTENSION__},
-		{""}, {""},
-		{"#ifdef", SHARP_IFDEF},
-		{""}, {""},
-		{"bool", CPP_BOOL},
-		{"#line", SHARP_LINE},
-		{""}, {""}, {""}, {""},
-		{"float", CPP_FLOAT},
-		{""}, {""}, {""}, {""}, {""},
-		{"switch", CPP_SWITCH},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""},
-		{"private", CPP_PRIVATE},
-		{"operator", CPP_OPERATOR},
-		{""}, {""}, {""}, {""}, {""}, {""},
-		{"while", CPP_WHILE},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""}, {""}, {""}, {""}, {""}, {""}, {""},
-		{""}, {""}, {""},
-		{"#define", SHARP_DEFINE},
-		{NULL, 0}
-	};
-
-	int i = 0;
-	for (i = 0; NULL != wordlist[i].name; i++)
-		if (wordlist[i].token == token)
-			return wordlist[i].name;
-
-	return NULL;
 }
 
