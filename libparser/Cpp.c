@@ -240,7 +240,7 @@ static inline void setToken(tokenInfo *currentToken, tokenType type,
 
 	currentToken->type = type;
 	strbuf_reset(getTokenName(currentToken));
-	if (type == TOKEN_NAME)
+	if (type == TOKEN_NAME || type == TOKEN_KEYWORD)
 		strbuf_puts(getTokenName(currentToken), buffer);
 	currentToken->cc = cc;
 	currentToken->lno = lno;
@@ -611,6 +611,7 @@ static void createTags(const struct parser_param *param)
 
 		switch (cc)
 		{
+            /*
 		case SYMBOL:
 		{
 			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
@@ -622,6 +623,7 @@ static void createTags(const struct parser_param *param)
 			}
 			break;
 		}
+        */
 		case CHAR_BRACE_OPEN:
 			processBraceOpen(param);
 			break;
@@ -649,6 +651,7 @@ static void createTags(const struct parser_param *param)
 				continue;
 			}
 		}
+        /*
 		case CPP_NEW:
 			// ignore line break
 			if ((c = nextToken(interested, cpp_reserved_word, 1)) == SYMBOL)
@@ -657,6 +660,7 @@ static void createTags(const struct parser_param *param)
 		case CPP___ATTRIBUTE__:
 			process_attribute(param);
 			break;
+            */
 		default:
 			break;
 		}
@@ -863,10 +867,6 @@ static void process_attribute(const struct parser_param *param)
 {
 	int brace = 0;
 	int c;
-	/*
-	 * Skip '...' in __attribute__((...))
-	 * but pick up symbols in it.
-	 */
 	while ((c = nextToken("()", cpp_reserved_word, 0)) != EOF) {
 		if (c == '(')
 			brace++;
@@ -1006,6 +1006,18 @@ static void parseParentheses(const struct parser_param *param, StatementInfo *si
             if (0 != knr)
                 while (knr-- > 0)
                     skipStatement(param, CHAR_SEMICOLON);
+        }
+        // skip symbol after args
+        int cc = 0;
+        while (cc = nextTokenStripMacro(param))
+        {
+            if (SYMBOL == cc || IS_RESERVED_WORD(cc))
+                putSymbol(param, PARSER_REF_SYM, token, lineno, sp);
+            else
+            {
+                pushbacktoken();
+                break;
+            }
         }
     }
 	else
@@ -1428,6 +1440,7 @@ static int cppNextToken(const struct parser_param *param)
 		case CPP_FOR:
 		case CPP_SWITCH:
 		case CPP_WHILE:
+        case CPP___ATTRIBUTE__:
 		{
 			// ignore line break
 			int c = 0;
@@ -1451,6 +1464,7 @@ static int cppNextToken(const struct parser_param *param)
 			skipStatement(param, CHAR_SEMICOLON);
 			break;
 		case CPP_THROW:
+        case CPP_NEW:
 			needContinue = TRUE;
 			break;
 		case CPP_ASM:
