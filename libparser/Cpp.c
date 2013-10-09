@@ -386,8 +386,6 @@ static void processBraceOpen(const struct parser_param *param);
 static void processBraceClose(const struct parser_param *param);
 // process ;,
 static void processStatementToken(const struct parser_param *param);
-// process __attribute__
-static void process_attribute(const struct parser_param *);
 // process class inheritance
 static void processInherit(const struct parser_param *);
 // skip until a statement end
@@ -611,19 +609,6 @@ static void createTags(const struct parser_param *param)
 
 		switch (cc)
 		{
-            /*
-		case SYMBOL:
-		{
-			tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
-			if (TOKEN_ARGS == prev->type)
-			{
-				// skip a symbol after an TOKEN_ARGS
-				putSymbol(param, PARSER_REF_SYM, token, lineno, sp);
-				reverseToken(CurrentStatementInfo);
-			}
-			break;
-		}
-        */
 		case CHAR_BRACE_OPEN:
 			processBraceOpen(param);
 			break;
@@ -651,16 +636,6 @@ static void createTags(const struct parser_param *param)
 				continue;
 			}
 		}
-        /*
-		case CPP_NEW:
-			// ignore line break
-			if ((c = nextToken(interested, cpp_reserved_word, 1)) == SYMBOL)
-				putSymbol(param, PARSER_REF_SYM, token, lineno, sp);
-			break;
-		case CPP___ATTRIBUTE__:
-			process_attribute(param);
-			break;
-            */
 		default:
 			break;
 		}
@@ -859,24 +834,6 @@ static void processStatementToken(const struct parser_param *param)
 				putSymbol(param, PARSER_REF_SYM, strbuf_value(getTokenName(prev2)),
 						prev2->lno, NULL);
 		}
-	}
-}
-
-// process_attribute: skip attributes in __attribute__((...)).
-static void process_attribute(const struct parser_param *param)
-{
-	int brace = 0;
-	int c;
-	while ((c = nextToken("()", cpp_reserved_word, 0)) != EOF) {
-		if (c == '(')
-			brace++;
-		else if (c == ')')
-			brace--;
-		else if (c == SYMBOL) {
-			putSymbol(param, PARSER_REF_SYM, token, lineno, sp);
-		}
-		if (brace == 0)
-			break;
 	}
 }
 
