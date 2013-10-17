@@ -1363,11 +1363,19 @@ static int cppNextToken(const struct parser_param *param)
 			CurrentStatementInfo->declaration = DECL_NAMESPACE;
 			break;
 		case CPP_WCOLON:
+        {
 			// ignore namespace
-			if (prevToken(CurrentStatementInfo, 1)->type == TOKEN_NAME)
+            tokenInfo *prev = prevToken(CurrentStatementInfo, 1);
+			if (prev->type == TOKEN_NAME)
+            {
+                // put symbol as reference
+                putSymbol(param, PARSER_REF_SYM, strbuf_value(prev->name),
+                        prev->lno, sp);
 				reverseToken(CurrentStatementInfo);
+            }
 			needContinue = TRUE;
 			break;
+        }
 		case CPP_OPERATOR:
 		{
 			STRBUF *funcName = strbuf_open(0);
