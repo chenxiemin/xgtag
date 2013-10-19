@@ -360,7 +360,8 @@ int main(int argc, char **argv)
 	int option_index = 0;
 
 	logging_arguments(argc, argv);
-	while ((optchar = getopt_long(argc, argv, "ab:cde:ifgGIlL:noOpPqrstTuvVx", long_options, &option_index)) != EOF) {
+	while ((optchar = getopt_long(argc, argv, "ab:cde:ifgGIlL:noOpPqrstTuvVx",
+                    long_options, &option_index)) != EOF) {
 		switch (optchar) {
 		case 0:
 			break;
