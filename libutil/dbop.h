@@ -36,6 +36,7 @@ typedef void* HANDLE;
 
 #define DBOP_PAGESIZE	8192
 #define VERSIONKEY	" __.VERSION"
+#define DB_KEY_PROJECT_ROOT " __.PROJECTROOT"
 
 typedef	struct {
 	/*

@@ -49,6 +49,7 @@ typedef struct {
 } GFIND;
 
 int gpath_open(const char *, int);
+DBOP *gpath_open_ex(const char *, const char *projectRoot, int);
 const char *gpath_path2fid(const char *, int *);
 const char *gpath_fid2path(const char *, int *);
 void gpath_put(const char *, int);

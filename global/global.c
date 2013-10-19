@@ -97,7 +97,12 @@ int print0;				/* -print0 option	*/
 int format;
 int type;				/* path conversion type */
 int match_part;				/* match part only	*/
-const char *cwd, *root, *dbpath;
+// const char *cwd, *root, *dbpath;
+static char cwd[MAXPATHLEN] = { 0 };
+static char root[MAXPATHLEN] = { 0 };
+static char root_with_slash[MAXPATHLEN] = { 0 };
+static char dbpath[MAXPATHLEN] = { 0 }; // indicate by -b, default is cwd
+
 char *context_file;
 char *context_lineno;
 char *file_list;
@@ -124,6 +129,7 @@ help(void)
 #define ENCODE_PATH	130
 #define MATCH_PART	131
 #define SINGLE_UPDATE	132
+#define DB_PATH 133
 #define SORT_FILTER     1
 #define PATH_FILTER     2
 #define BOTH_FILTER     (SORT_FILTER|PATH_FILTER)
@@ -209,7 +215,9 @@ decide_tag_by_context(const char *tag, const char *file, int lineno)
 	int db = GSYMS;
 	int iscompline = 0;
 
-	if (normalize(file, get_root_with_slash(), cwd, path, sizeof(path)) == NULL)
+    // CXM_FIX
+	// if (normalize(file, get_root_with_slash(), cwd, path, sizeof(path)) == NULL)
+	if (normalize(file, root_with_slash, cwd, path, sizeof(path)) == NULL)
 		die("'%s' is out of the source project.", file);
 	/*
 	 * get file id
@@ -314,8 +322,37 @@ finish:
 	}
 	return db;
 }
-int
-main(int argc, char **argv)
+
+static int _setupDBPath()
+{
+    // get cwd
+	if (!getcwd(cwd, MAXPATHLEN))
+		return -1;
+
+    // setup db path
+    if ('\0' == dbpath[0])
+        strlimcpy(dbpath, cwd, sizeof(dbpath));
+
+    // get root
+    DBOP *gpathOp = gpath_open_ex(dbpath, NULL, 0);
+	if (NULL == gpathOp)
+		die("GPATH not found.");
+    const char *projRoot = dbop_getoption(gpathOp, DB_KEY_PROJECT_ROOT);
+	if (NULL == projRoot)
+		die("Cannot get project root");
+	gpath_close();
+    gpathOp = NULL;
+    strlimcpy(root, projRoot, sizeof(root));
+    // copy root_with_slash
+    if ('/' != root[strlen(root) -1])
+		snprintf(root_with_slash, sizeof(root_with_slash), "%s/", root);
+    else
+        strlimcpy(root_with_slash, root, sizeof(root_with_slash));
+
+    return 0;
+}
+
+int main(int argc, char **argv)
 {
 	const char *av = NULL;
 	int db;
@@ -323,13 +360,17 @@ main(int argc, char **argv)
 	int option_index = 0;
 
 	logging_arguments(argc, argv);
-	while ((optchar = getopt_long(argc, argv, "acde:ifgGIlL:noOpPqrstTuvVx", long_options, &option_index)) != EOF) {
+	while ((optchar = getopt_long(argc, argv, "ab:cde:ifgGIlL:noOpPqrstTuvVx", long_options, &option_index)) != EOF) {
 		switch (optchar) {
 		case 0:
 			break;
 		case 'a':
 			aflag++;
 			break;
+        case 'b':
+            if (NULL == realpath(optarg, dbpath))
+				die_with_code(-2, "Cannot get realpath");
+            break;
 		case 'c':
 			cflag++;
 			setcom(optchar);
@@ -592,12 +633,16 @@ main(int argc, char **argv)
 	 * if GTAGS not found, exit with an error message.
 	 */
 	{
+        /*
 		int status = setupdbpath(pflag && vflag);
 		if (status < 0)
 			die_with_code(-status, gtags_dbpath_error);
 		cwd = get_cwd();
 		root = get_root();
 		dbpath = get_dbpath();
+        */
+        if (0 != _setupDBPath())
+			die_with_code(-1, "Gtags Datebase file error");
 	}
 	/*
 	 * print dbpath or rootdir.
@@ -1184,7 +1229,9 @@ grep(const char *pattern, char *const *argv, const char *dbpath)
 		if (user_specified) {
 			static char buf[MAXPATHLEN];
 
-			if (normalize(path, get_root_with_slash(), cwd, buf, sizeof(buf)) == NULL) {
+			// if (normalize(path, get_root_with_slash(), cwd, buf, sizeof(buf)) == NULL)
+			if (normalize(path, root_with_slash, cwd, buf, sizeof(buf)) == NULL)
+            {
 				warning("'%s' is out of the source project.", path);
 				continue;
 			}
@@ -1449,7 +1496,9 @@ parsefile(char *const *argv, const char *cwd, const char *root, const char *dbpa
 		/*
 		 * convert the path into relative to the root directory of source tree.
 		 */
-		if (normalize(av, get_root_with_slash(), cwd, path, sizeof(path)) == NULL) {
+		// if (normalize(av, get_root_with_slash(), cwd, path, sizeof(path)) == NULL)
+		if (normalize(av, root_with_slash, cwd, path, sizeof(path)) == NULL)
+        {
 			if (!qflag)
 				die("'%s' is out of the source project.", av);
 			continue;

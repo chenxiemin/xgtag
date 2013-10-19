@@ -407,7 +407,10 @@ gtags_open(const char *dbpath, const char *root, int db, int mode, int flags)
 		if (dbop_getoption(gtop->dbop, COMPNAMEKEY) != NULL)
 			gtop->format |= GTAGS_COMPNAME;
 	}
-	if (gpath_open(dbpath, dbmode) < 0) {
+    // put project root into GPATH
+	// if (gpath_open(dbpath, dbmode) < 0)
+	if (NULL == gpath_open_ex(dbpath, root, dbmode))
+    {
 		if (dbmode == 1)
 			die("cannot create GPATH.");
 		else

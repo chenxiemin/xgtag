@@ -93,8 +93,7 @@ static int create_version = 2;	/* format version of newly created tag file */
  *	r)		0: normal
  *			-1: error
  */
-int
-gpath_open(const char *dbpath, int mode)
+int gpath_open(const char *dbpath, int mode)
 {
 	if (opened > 0) {
 		if (mode != _mode)
@@ -131,6 +130,19 @@ gpath_open(const char *dbpath, int mode)
 	opened++;
 	return 0;
 }
+
+// open db and put project root key if the mode is create
+DBOP *gpath_open_ex(const char *dbpath, const char *projectRoot, int mode)
+{
+    if (0 != gpath_open(dbpath, mode))
+        return NULL;
+    // put project root key
+    if (1 == mode)
+        dbop_putoption(dbop, DB_KEY_PROJECT_ROOT, projectRoot);
+
+    return dbop;
+}
+
 /*
  * gpath_put: put path name
  *
