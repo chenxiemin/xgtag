@@ -59,9 +59,11 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+int main(int, char **);
+static void readOptions(int argc, char **argv);
+static void initParser();
 static void usage(void);
 static void help(void);
-int main(int, char **);
 int incremental(const char *, const char *);
 void updatetags(const char *, const char *, IDSET *, STRBUF *);
 void createtags(const char *, const char *);
@@ -69,7 +71,9 @@ int printconf(const char *);
 
 int cflag;					/* compact format */
 int iflag;					/* incremental update */
-int Iflag;					/* make  idutils index */
+/*
+int Iflag;					// make  idutils index
+*/
 int Oflag;					/* use objdir */
 int qflag;					/* quiet mode */
 int wflag;					/* warning message */
@@ -86,6 +90,9 @@ const char *dump_target;
 char *single_update;
 int statistics = STATISTICS_STYLE_NONE;
 
+char dbpath[MAXPATHLEN];
+char cwd[MAXPATHLEN];
+
 #define GTAGSFILES "gtags.files"
 
 /*
@@ -94,23 +101,8 @@ int statistics = STATISTICS_STYLE_NONE;
 int do_path;
 int convert_type = PATH_RELATIVE;
 
-int extractmethod;
+// int extractmethod;
 int total;
-
-static void
-usage(void)
-{
-	if (!qflag)
-		fputs(usage_const, stderr);
-	exit(2);
-}
-static void
-help(void)
-{
-	fputs(usage_const, stdout);
-	fputs(help_const, stdout);
-	exit(0);
-}
 
 static struct option const long_options[] = {
 	/*
@@ -123,7 +115,7 @@ static struct option const long_options[] = {
 	{"compact", no_argument, NULL, 'c'},
 	{"dump", required_argument, NULL, 'd'},
 	{"file", required_argument, NULL, 'f'},
-	{"idutils", no_argument, NULL, 'I'},
+	// {"idutils", no_argument, NULL, 'I'},
 	{"incremental", no_argument, NULL, 'i'},
 	{"max-args", required_argument, NULL, 'n'},
 	{"omit-gsyms", no_argument, NULL, 'o'},		/* removed */
@@ -159,277 +151,23 @@ static struct option const long_options[] = {
 	{ 0 }
 };
 
-static const char *langmap = DEFAULTLANGMAP;
-static const char *gtags_parser;
+// static const char *langmap = DEFAULTLANGMAP;
+// static const char *gtags_parser;
 
-int
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
-	char dbpath[MAXPATHLEN];
-	char cwd[MAXPATHLEN];
-	STRBUF *sb = strbuf_open(0);
-	int optchar;
-	int option_index = 0;
+	// STRBUF *sb = strbuf_open(0);
 	STATISTICS_TIME *tim;
 
 	logging_arguments(argc, argv);
-	while ((optchar = getopt_long(argc, argv, "cd:f:iIn:oOqvwse", long_options, &option_index)) != EOF) {
-		switch (optchar) {
-		case 0:
-			/* already flags set */
-			break;
-		case OPT_CONFIG:
-			show_config = 1;
-			if (optarg)
-				config_name = optarg;
-			break;
-		case OPT_GTAGSCONF:
-			gtagsconf = optarg;
-			break;
-		case OPT_GTAGSLABEL:
-			gtagslabel = optarg;
-			break;
-		case OPT_PATH:
-			do_path = 1;
-			if (!strcmp("absolute", optarg))
-				convert_type = PATH_ABSOLUTE;
-			else if (!strcmp("relative", optarg))
-				convert_type = PATH_RELATIVE;
-			else if (!strcmp("through", optarg))
-				convert_type = PATH_THROUGH;
-			else
-				die("Unknown path type.");
-			break;
-		case OPT_SINGLE_UPDATE:
-			iflag++;
-			single_update = optarg;
-			break;
-		case OPT_ENCODE_PATH:
-			if (strlen(optarg) > 255)
-				die("too many encode chars.");
-			if (strchr(optarg, '/') || strchr(optarg, '.'))
-				die("cannot encode '/' and '.' in the path.");
-			set_encode_chars((unsigned char *)optarg);
-			break;
-		case OPT_ACCEPT_DOTFILES:
-			set_accept_dotfiles();
-			break;
-		case 'c':
-			cflag++;
-			break;
-		case 'd':
-			dump_target = optarg;
-			break;
-		case 'f':
-			file_list = optarg;
-			break;
-		case 'i':
-			iflag++;
-			break;
-		case 'I':
-			Iflag++;
-			break;
-		case 'o':
-			/*
-			 * Though the -o(--omit-gsyms) was removed, this code
-			 * is left for compatibility.
-			 */
-			break;
-		case 'O':
-			Oflag++;
-			break;
-		case 'q':
-			qflag++;
-			setquiet();
-			break;
-		case 'w':
-			wflag++;
-			break;
-		case 'v':
-			vflag++;
-			setverbose();
-			break;
-		default:
-			usage();
-			break;
-		}
-	}
-	if (gtagsconf) {
-		char path[MAXPATHLEN];
 
-		if (realpath(gtagsconf, path) == NULL)
-			die("%s not found.", gtagsconf);
-		set_env("GTAGSCONF", path);
-	}
-	if (gtagslabel) {
-		set_env("GTAGSLABEL", gtagslabel);
-	}
-	if (qflag)
-		vflag = 0;
-	if (show_version)
-		version(NULL, vflag);
-	if (show_help)
-		help();
-
-	argc -= optind;
-        argv += optind;
-
-	/* If dbpath is specified, -O(--objdir) option is ignored. */
-	if (argc > 0)
-		Oflag = 0;
-	if (show_config) {
-		if (config_name)
-			printconf(config_name);
-		else
-			fprintf(stdout, "%s\n", getconfline());
-		exit(0);
-	} else if (do_path) {
-		/*
-		 * This is the main body of path filter.
-		 * This code extract path name from tag line and
-		 * replace it with the relative or the absolute path name.
-		 *
-		 * By default, if we are in src/ directory, the output
-		 * should be converted like follws:
-		 *
-		 * main      10 ./src/main.c  main(argc, argv)\n
-		 * main      22 ./libc/func.c   main(argc, argv)\n
-		 *		v
-		 * main      10 main.c  main(argc, argv)\n
-		 * main      22 ../libc/func.c   main(argc, argv)\n
-		 *
-		 * Similarly, the --path=absolute option specified, then
-		 *		v
-		 * main      10 /prj/xxx/src/main.c  main(argc, argv)\n
-		 * main      22 /prj/xxx/libc/func.c   main(argc, argv)\n
-		 */
-		STRBUF *ib = strbuf_open(MAXBUFLEN);
-		CONVERT *cv;
-		char *ctags_x;
-
-		if (argc < 3)
-			die("gtags --path: 3 arguments needed.");
-		cv = convert_open(convert_type, FORMAT_CTAGS_X, argv[0], argv[1], argv[2], stdout, NOTAGS);
-		while ((ctags_x = strbuf_fgets(ib, stdin, STRBUF_NOCRLF)) != NULL)
-			convert_put(cv, ctags_x);
-		convert_close(cv);
-		strbuf_close(ib);
-		exit(0);
-	} else if (dump_target) {
-		/*
-		 * Dump a tag file.
-		 */
-		DBOP *dbop = NULL;
-		const char *dat = 0;
-		int is_gpath = 0;
-
-		if (!test("f", dump_target))
-			die("file '%s' not found.", dump_target);
-		if ((dbop = dbop_open(dump_target, 0, 0, DBOP_RAW)) == NULL)
-			die("file '%s' is not a tag file.", dump_target);
-		/*
-		 * The file which has a NEXTKEY record is GPATH.
-		 */
-		if (dbop_get(dbop, NEXTKEY))
-			is_gpath = 1;
-		for (dat = dbop_first(dbop, NULL, NULL, 0); dat != NULL; dat = dbop_next(dbop)) {
-			const char *flag = is_gpath ? dbop_getflag(dbop) : "";
-
-			if (*flag)
-				printf("%s\t%s\t%s\n", dbop->lastkey, dat, flag);
-			else
-				printf("%s\t%s\n", dbop->lastkey, dat);
-		}
-		dbop_close(dbop);
-		exit(0);
-	} else if (Iflag) {
-		if (!usable("mkid"))
-			die("mkid not found.");
-	}
-
-	/*
-	 * If 'gtags.files' exists, use it as a file list.
-	 * If the file_list other than "-" is given, it must be readable file.
-	 */
-	if (file_list == NULL && test("f", GTAGSFILES))
-		file_list = GTAGSFILES;
-	if (file_list && strcmp(file_list, "-")) {
-		if (test("d", file_list))
-			die("'%s' is a directory.", file_list);
-		else if (!test("f", file_list))
-			die("'%s' not found.", file_list);
-		else if (!test("r", file_list))
-			die("'%s' is not readable.", file_list);
-	}
-	if (!getcwd(cwd, MAXPATHLEN))
-		die("cannot get current directory.");
-	canonpath(cwd);
-	/*
-	 * Regularize the path name for single updating (--single-update).
-	 */
-	if (single_update) {
-		static char regular_path_name[MAXPATHLEN];
-		char *p = single_update;
-		
-		if (!test("f", p))
-			die("'%s' not found.", p);
-		if (isabspath(p)) {
-			char *q = locatestring(p, cwd, MATCH_AT_FIRST);
-
-			if (q && *q == '/')
-				snprintf(regular_path_name, MAXPATHLEN, "./%s", q + 1);
-			else
-				die("path '%s' is out of the project.", p);
-
-		} else {
-			if (p[0] == '.' && p[1] == '/')
-				snprintf(regular_path_name, MAXPATHLEN, "%s", p);
-			else
-				snprintf(regular_path_name, MAXPATHLEN, "./%s", p);
-		}
-		single_update = regular_path_name;
-	}
-	/*
-	 * Decide directory (dbpath) in which gtags make tag files.
-	 *
-	 * Gtags create tag files at current directory by default.
-	 * If dbpath is specified as an argument then use it.
-	 * If the -i option specified and both GTAGS and GRTAGS exists
-	 * at one of the candidate directories then gtags use existing
-	 * tag files.
-	 */
-	if (iflag) {
-		if (argc > 0)
-			realpath(*argv, dbpath);
-		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, vflag))
-			strlimcpy(dbpath, cwd, sizeof(dbpath));
-	} else {
-		if (argc > 0)
-			realpath(*argv, dbpath);
-		else if (Oflag) {
-			char *objdir = getobjdir(cwd, vflag);
-
-			if (objdir == NULL)
-				die("Objdir not found.");
-			strlimcpy(dbpath, objdir, sizeof(dbpath));
-		} else
-			strlimcpy(dbpath, cwd, sizeof(dbpath));
-	}
-	if (iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
-		!test("f", makepath(dbpath, dbname(GRTAGS), NULL)) ||
-		!test("f", makepath(dbpath, dbname(GPATH), NULL)))) {
-		if (wflag)
-			warning("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
-		iflag = 0;
-	}
-	if (!test("d", dbpath))
-		die("directory '%s' not found.", dbpath);
-	if (vflag)
-		fprintf(stderr, "[%s] Gtags started.\n", now());
-	/*
-	 * load configuration file.
-	 */
+    // read options
+    readOptions(argc, argv);
+	// load configuration file.
 	openconf();
+    // init parser
+    initParser();
+    /*
 	if (getconfb("extractmethod"))
 		extractmethod = 1;
 	strbuf_reset(sb);
@@ -438,46 +176,22 @@ main(int argc, char **argv)
 	strbuf_reset(sb);
 	if (getconfs("gtags_parser", sb))
 		gtags_parser = check_strdup(strbuf_value(sb));
-	/*
-	 * initialize parser.
-	 */
+	// initialize parser.
 	if (vflag && gtags_parser)
 		fprintf(stderr, " Using plug-in parser.\n");
 	parser_init(langmap, gtags_parser);
-	if (vflag && file_list)
-		fprintf(stderr, " Using '%s' as a file list.\n", file_list);
-	/*
-	 * Start statistics.
-	 */
+    */
+	
+	// Start statistics.
 	init_statistics();
-	/*
-	 * incremental update.
-	 */
-	if (iflag) {
-		/*
-		 * Version check. If existing tag files are old enough
-		 * gtagsopen() abort with error message.
-		 */
-		GTOP *gtop = gtags_open(dbpath, cwd, GTAGS, GTAGS_MODIFY, 0);
-		gtags_close(gtop);
-		/*
-		 * GPATH is needed for incremental updating.
-		 * Gtags check whether or not GPATH exist, since it may be
-		 * removed by mistake.
-		 */
-		if (!test("f", makepath(dbpath, dbname(GPATH), NULL)))
-			die("Old version tag file found. Please remake it.");
-		(void)incremental(dbpath, cwd);
-		print_statistics(statistics);
-		exit(0);
-	}
-	/*
-	 * create GTAGS and GRTAGS
-	 */
-	createtags(dbpath, cwd);
-	/*
-	 * create idutils index.
-	 */
+	
+	if (iflag)
+		incremental(dbpath, cwd); // single update a file
+    else
+        createtags(dbpath, cwd); // create GTAGS and GRTAGS
+	
+#if 0
+	// create idutils index.
 	if (Iflag) {
 		tim = statistics_time_start("Time of creating ID");
 		if (vflag)
@@ -503,14 +217,17 @@ main(int argc, char **argv)
 			die("cannot chmod ID file.");
 		statistics_time_end(tim);
 	}
+#endif
+
 	if (vflag)
 		fprintf(stderr, "[%s] Done.\n", now());
 	closeconf();
-	strbuf_close(sb);
+	// strbuf_close(sb);
 	print_statistics(statistics);
 
 	return 0;
 }
+
 /*
  * incremental: incremental update
  *
@@ -531,6 +248,17 @@ incremental(const char *dbpath, const char *root)
 	int updated = 0;
 	const char *path;
 	unsigned int id, limit;
+
+	// Version check. If existing tag files are old enough
+	// gtagsopen() abort with error message.
+	GTOP *gtop = gtags_open(dbpath, cwd, GTAGS, GTAGS_MODIFY, 0);
+	gtags_close(gtop);
+	
+	// GPATH is needed for incremental updating.
+	// Gtags check whether or not GPATH exist, since it may be
+	// removed by mistake.
+	if (!test("f", makepath(dbpath, dbname(GPATH), NULL)))
+		die("Old version tag file found. Please remake it.");
 
 	tim = statistics_time_start("Time of inspecting %s and %s.", dbname(GTAGS), dbname(GRTAGS));
 	if (vflag) {
@@ -742,6 +470,551 @@ put_syms(int type, const char *tag, int lno, const char *path, const char *line_
 	gtags_put_using(gtop, tag, lno, data->fid, line_image);
 }
 
+
+/*
+ * updatetags: update tag file.
+ *
+ *	i)	dbpath		directory in which tag file exist
+ *	i)	root		root directory of source tree
+ *	i)	deleteset	bit array of fid of deleted or modified files 
+ *	i)	addlist		\0 separated list of added or modified files
+ */
+void
+updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addlist)
+{
+	struct put_func_data data;
+	int seqno, flags;
+	const char *path, *start, *end;
+
+	if (vflag)
+		fprintf(stderr, "[%s] Updating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
+	/*
+	 * Open tag files.
+	 */
+	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_MODIFY, 0);
+	if (test("f", makepath(dbpath, dbname(GRTAGS), NULL))) {
+		data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_MODIFY, 0);
+	} else {
+		/*
+		 * If you set NULL to data.gtop[GRTAGS], parse_file() doesn't write to
+		 * GRTAGS. See put_syms().
+		 */
+		data.gtop[GRTAGS] = NULL;
+	}
+	/*
+	 * Delete tags from GTAGS.
+	 */
+	if (!idset_empty(deleteset)) {
+		if (vflag) {
+			char fid[MAXFIDLEN];
+			int total = idset_count(deleteset);
+			unsigned int id;
+
+			seqno = 1;
+			for (id = idset_first(deleteset); id != END_OF_ID; id = idset_next(deleteset)) {
+				snprintf(fid, sizeof(fid), "%d", id);
+				path = gpath_fid2path(fid, NULL);
+				if (path == NULL)
+					die("GPATH is corrupted.");
+				fprintf(stderr, " [%d/%d] deleting tags of %s\n", seqno++, total, path + 2);
+			}
+		}
+		gtags_delete(data.gtop[GTAGS], deleteset);
+		if (data.gtop[GRTAGS] != NULL)
+			gtags_delete(data.gtop[GRTAGS], deleteset);
+	}
+	/*
+	 * Set flags.
+	 */
+	data.gtop[GTAGS]->flags = 0;
+	// if (extractmethod)
+    if (getconfb("extractmethod"))
+		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
+	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
+	flags = 0;
+	if (vflag)
+		flags |= PARSER_VERBOSE;
+	if (debug)
+		flags |= PARSER_DEBUG;
+	if (wflag)
+		flags |= PARSER_WARNING;
+	/*
+	 * Add tags to GTAGS and GRTAGS.
+	 */
+	start = strbuf_value(addlist);
+	end = start + strbuf_getlen(addlist);
+	seqno = 0;
+	for (path = start; path < end; path += strlen(path) + 1) {
+		gpath_put(path, GPATH_SOURCE);
+		data.fid = gpath_path2fid(path, NULL);
+		if (data.fid == NULL)
+			die("GPATH is corrupted.('%s' not found)", path);
+		if (vflag)
+			fprintf(stderr, " [%d/%d] extracting tags of %s\n", ++seqno, total, path + 2);
+		parse_file(path, flags, put_syms, &data);
+		// parse_file(path, flags, put_syms_sqlite, &data);
+		gtags_flush(data.gtop[GTAGS], data.fid);
+		if (data.gtop[GRTAGS] != NULL)
+			gtags_flush(data.gtop[GRTAGS], data.fid);
+	}
+	parser_exit();
+	gtags_close(data.gtop[GTAGS]);
+	if (data.gtop[GRTAGS] != NULL)
+		gtags_close(data.gtop[GRTAGS]);
+}
+/*
+ * createtags: create tags file
+ *
+ *	i)	dbpath	dbpath directory
+ *	i)	root	root directory of source tree
+ */
+void
+createtags(const char *dbpath, const char *root)
+{
+	STATISTICS_TIME *tim;
+	STRBUF *sb = strbuf_open(0);
+	struct put_func_data data;
+	int openflags, flags, seqno;
+	const char *path;
+    char realPath[MAXPATHLEN + 1];
+    char normalPath[MAXPATHLEN + 1];
+    char rootSlash[MAXPATHLEN + 1];
+
+    sprintf(rootSlash, "%s/", root);
+
+	tim = statistics_time_start("Time of creating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
+	if (vflag)
+		fprintf(stderr, "[%s] Creating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
+	openflags = cflag ? GTAGS_COMPACT : 0;
+	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_CREATE, openflags);
+	data.gtop[GTAGS]->flags = 0;
+	// if (extractmethod)
+    if (getconfb("extractmethod"))
+		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
+	data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_CREATE, openflags);
+	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
+	flags = 0;
+	if (vflag)
+		flags |= PARSER_VERBOSE;
+	if (debug)
+		flags |= PARSER_DEBUG;
+	if (wflag)
+		flags |= PARSER_WARNING;
+	/*
+	 * Add tags to GTAGS and GRTAGS.
+	 */
+	if (file_list)
+    {
+        if (vflag)
+            fprintf(stderr, " Using '%s' as a file list.\n", file_list);
+		find_open_filelist(file_list, root);
+    }
+	else
+		find_open(NULL);
+	seqno = 0;
+	// close data base
+	// OpenDB();
+	
+	while ((path = find_read()) != NULL) {
+		if (*path == ' ') {
+			path++;
+			if (!test("b", path))
+				gpath_put(path, GPATH_OTHER);
+			continue;
+		}
+#if 1
+        // check whether path exist
+        char *res = realpath(path, realPath);
+        if (NULL == res)
+        {
+            warning("read link failed %s to %s", path, realPath);
+            continue;
+        }
+        res = normalize(realPath, rootSlash, dbpath, normalPath, MAXPATHLEN);
+        if (NULL == res)
+        {
+            warning("normailize path failed %s to %s", path, realPath);
+            continue;
+        }
+        // always use real path instead
+        if (NULL != gpath_path2fid(normalPath, NULL))
+        {
+            warning("duplicated symbol link deprecated: %s", path);
+            continue;
+        }
+        path = normalPath;
+#endif
+		gpath_put(path, GPATH_SOURCE);
+		data.fid = gpath_path2fid(path, NULL);
+		if (data.fid == NULL)
+			die("GPATH is corrupted.('%s' not found)", path);
+		seqno++;
+		if (vflag)
+			fprintf(stderr, " [%d] extracting tags of %s\n", seqno, path + 2);
+		parse_file(path, flags, put_syms, &data);
+		// parse_file(path, flags, put_syms_sqlite, &data);
+		gtags_flush(data.gtop[GTAGS], data.fid);
+		gtags_flush(data.gtop[GRTAGS], data.fid);
+	}
+	// open database
+	// CloseDB();
+	
+	total = seqno;
+	parser_exit();
+	find_close();
+	statistics_time_end(tim);
+	tim = statistics_time_start("Time of flushing B-tree cache");
+	gtags_close(data.gtop[GTAGS]);
+	gtags_close(data.gtop[GRTAGS]);
+	statistics_time_end(tim);
+	strbuf_reset(sb);
+	if (getconfs("GTAGS_extra", sb)) {
+		tim = statistics_time_start("Time of executing GTAGS_extra command");
+		if (system(strbuf_value(sb)))
+			fprintf(stderr, "GTAGS_extra command failed: %s\n", strbuf_value(sb));
+		statistics_time_end(tim);
+	}
+	strbuf_reset(sb);
+	if (getconfs("GRTAGS_extra", sb)) {
+		tim = statistics_time_start("Time of executing GRTAGS_extra command");
+		if (system(strbuf_value(sb)))
+			fprintf(stderr, "GRTAGS_extra command failed: %s\n", strbuf_value(sb));
+		statistics_time_end(tim);
+	}
+	strbuf_close(sb);
+}
+
+/*
+ * printconf: print configuration data.
+ *
+ *	i)	name	label of config data
+ *	r)		exit code
+ */
+int printconf(const char *name)
+{
+	int num;
+	int exist = 1;
+
+	if (getconfn(name, &num))
+		fprintf(stdout, "%d\n", num);
+	else if (getconfb(name))
+		fprintf(stdout, "1\n");
+	else {
+		STRBUF *sb = strbuf_open(0);
+		if (getconfs(name, sb))
+			fprintf(stdout, "%s\n", strbuf_value(sb));
+		else
+			exist = 0;
+		strbuf_close(sb);
+	}
+	return exist;
+}
+
+static void readOptions(int argc, char **argv)
+{
+	int option_index = 0;
+	int optchar;
+	while ((optchar = getopt_long(argc, argv, "cd:f:in:oOqvwse", long_options, &option_index)) != EOF) {
+		switch (optchar) {
+		case 0:
+			/* already flags set */
+			break;
+		case OPT_CONFIG:
+			show_config = 1;
+			if (optarg)
+				config_name = optarg;
+			break;
+		case OPT_GTAGSCONF:
+			gtagsconf = optarg;
+			break;
+		case OPT_GTAGSLABEL:
+			gtagslabel = optarg;
+			break;
+		case OPT_PATH:
+			do_path = 1;
+			if (!strcmp("absolute", optarg))
+				convert_type = PATH_ABSOLUTE;
+			else if (!strcmp("relative", optarg))
+				convert_type = PATH_RELATIVE;
+			else if (!strcmp("through", optarg))
+				convert_type = PATH_THROUGH;
+			else
+				die("Unknown path type.");
+			break;
+		case OPT_SINGLE_UPDATE:
+			iflag++;
+			single_update = optarg;
+			break;
+		case OPT_ENCODE_PATH:
+			if (strlen(optarg) > 255)
+				die("too many encode chars.");
+			if (strchr(optarg, '/') || strchr(optarg, '.'))
+				die("cannot encode '/' and '.' in the path.");
+			set_encode_chars((unsigned char *)optarg);
+			break;
+		case OPT_ACCEPT_DOTFILES:
+			set_accept_dotfiles();
+			break;
+		case 'c':
+			cflag++;
+			break;
+		case 'd':
+			dump_target = optarg;
+			break;
+		case 'f':
+			file_list = optarg;
+			break;
+		case 'i':
+			iflag++;
+			break;
+        /* // no use anymore
+		case 'I':
+			Iflag++;
+			break;
+        */
+		case 'o':
+			/*
+			 * Though the -o(--omit-gsyms) was removed, this code
+			 * is left for compatibility.
+			 */
+			break;
+		case 'O':
+			Oflag++;
+			break;
+		case 'q':
+			qflag++;
+			setquiet();
+			break;
+		case 'w':
+			wflag++;
+			break;
+		case 'v':
+			vflag++;
+			setverbose();
+			break;
+		default:
+			usage();
+			break;
+		}
+	}
+
+	if (gtagsconf) {
+		char path[MAXPATHLEN];
+
+		if (realpath(gtagsconf, path) == NULL)
+			die("%s not found.", gtagsconf);
+		set_env("GTAGSCONF", path);
+	}
+	if (gtagslabel) {
+		set_env("GTAGSLABEL", gtagslabel);
+	}
+	if (qflag)
+		vflag = 0;
+	if (show_version)
+		version(NULL, vflag);
+	if (show_help)
+		help();
+
+	argc -= optind;
+    argv += optind;
+
+	/* If dbpath is specified, -O(--objdir) option is ignored. */
+	if (argc > 0)
+		Oflag = 0;
+	if (show_config) {
+		if (config_name)
+			printconf(config_name);
+		else
+			fprintf(stdout, "%s\n", getconfline());
+		exit(0);
+	} else if (do_path) {
+		/*
+		 * This is the main body of path filter.
+		 * This code extract path name from tag line and
+		 * replace it with the relative or the absolute path name.
+		 *
+		 * By default, if we are in src/ directory, the output
+		 * should be converted like follws:
+		 *
+		 * main      10 ./src/main.c  main(argc, argv)\n
+		 * main      22 ./libc/func.c   main(argc, argv)\n
+		 *		v
+		 * main      10 main.c  main(argc, argv)\n
+		 * main      22 ../libc/func.c   main(argc, argv)\n
+		 *
+		 * Similarly, the --path=absolute option specified, then
+		 *		v
+		 * main      10 /prj/xxx/src/main.c  main(argc, argv)\n
+		 * main      22 /prj/xxx/libc/func.c   main(argc, argv)\n
+		 */
+		STRBUF *ib = strbuf_open(MAXBUFLEN);
+		CONVERT *cv;
+		char *ctags_x;
+
+		if (argc < 3)
+			die("gtags --path: 3 arguments needed.");
+		cv = convert_open(convert_type, FORMAT_CTAGS_X, argv[0], argv[1], argv[2], stdout, NOTAGS);
+		while ((ctags_x = strbuf_fgets(ib, stdin, STRBUF_NOCRLF)) != NULL)
+			convert_put(cv, ctags_x);
+		convert_close(cv);
+		strbuf_close(ib);
+		exit(0);
+	} else if (dump_target) {
+		/*
+		 * Dump a tag file.
+		 */
+		DBOP *dbop = NULL;
+		const char *dat = 0;
+		int is_gpath = 0;
+
+		if (!test("f", dump_target))
+			die("file '%s' not found.", dump_target);
+		if ((dbop = dbop_open(dump_target, 0, 0, DBOP_RAW)) == NULL)
+			die("file '%s' is not a tag file.", dump_target);
+		/*
+		 * The file which has a NEXTKEY record is GPATH.
+		 */
+		if (dbop_get(dbop, NEXTKEY))
+			is_gpath = 1;
+		for (dat = dbop_first(dbop, NULL, NULL, 0); dat != NULL; dat = dbop_next(dbop)) {
+			const char *flag = is_gpath ? dbop_getflag(dbop) : "";
+
+			if (*flag)
+				printf("%s\t%s\t%s\n", dbop->lastkey, dat, flag);
+			else
+				printf("%s\t%s\n", dbop->lastkey, dat);
+		}
+		dbop_close(dbop);
+		exit(0);
+	}
+#if 0
+    else if (Iflag) {
+		if (!usable("mkid"))
+			die("mkid not found.");
+	}
+#endif
+
+	/*
+	 * If 'gtags.files' exists, use it as a file list.
+	 * If the file_list other than "-" is given, it must be readable file.
+	 */
+	if (file_list == NULL && test("f", GTAGSFILES))
+		file_list = GTAGSFILES;
+	if (file_list && strcmp(file_list, "-")) {
+		if (test("d", file_list))
+			die("'%s' is a directory.", file_list);
+		else if (!test("f", file_list))
+			die("'%s' not found.", file_list);
+		else if (!test("r", file_list))
+			die("'%s' is not readable.", file_list);
+	}
+	if (!getcwd(cwd, MAXPATHLEN))
+		die("cannot get current directory.");
+	canonpath(cwd);
+	/*
+	 * Regularize the path name for single updating (--single-update).
+	 */
+	if (single_update) {
+		static char regular_path_name[MAXPATHLEN];
+		char *p = single_update;
+		
+		if (!test("f", p))
+			die("'%s' not found.", p);
+		if (isabspath(p)) {
+			char *q = locatestring(p, cwd, MATCH_AT_FIRST);
+
+			if (q && *q == '/')
+				snprintf(regular_path_name, MAXPATHLEN, "./%s", q + 1);
+			else
+				die("path '%s' is out of the project.", p);
+
+		} else {
+			if (p[0] == '.' && p[1] == '/')
+				snprintf(regular_path_name, MAXPATHLEN, "%s", p);
+			else
+				snprintf(regular_path_name, MAXPATHLEN, "./%s", p);
+		}
+		single_update = regular_path_name;
+	}
+	/*
+	 * Decide directory (dbpath) in which gtags make tag files.
+	 *
+	 * Gtags create tag files at current directory by default.
+	 * If dbpath is specified as an argument then use it.
+	 * If the -i option specified and both GTAGS and GRTAGS exists
+	 * at one of the candidate directories then gtags use existing
+	 * tag files.
+	 */
+	if (iflag) {
+		if (argc > 0)
+			realpath(*argv, dbpath);
+		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, vflag))
+			strlimcpy(dbpath, cwd, sizeof(dbpath));
+	} else {
+		if (argc > 0)
+			realpath(*argv, dbpath);
+		else if (Oflag) {
+			char *objdir = getobjdir(cwd, vflag);
+
+			if (objdir == NULL)
+				die("Objdir not found.");
+			strlimcpy(dbpath, objdir, sizeof(dbpath));
+		} else
+			strlimcpy(dbpath, cwd, sizeof(dbpath));
+	}
+	if (iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
+		!test("f", makepath(dbpath, dbname(GRTAGS), NULL)) ||
+		!test("f", makepath(dbpath, dbname(GPATH), NULL)))) {
+		if (wflag)
+			warning("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
+		iflag = 0;
+	}
+	if (!test("d", dbpath))
+		die("directory '%s' not found.", dbpath);
+	if (vflag)
+		fprintf(stderr, "[%s] Gtags started.\n", now());
+}
+
+static void initParser()
+{
+    char *langmap = NULL;
+    char *gtags_parser = NULL;
+
+    // get lang map
+	STRBUF *sb = strbuf_open(0);
+	if (getconfs("langmap", sb))
+		langmap = check_strdup(strbuf_value(sb));
+	strbuf_reset(sb);
+    // get parser
+	if (getconfs("gtags_parser", sb))
+		gtags_parser = check_strdup(strbuf_value(sb));
+	if (vflag && gtags_parser)
+		fprintf(stderr, " Using plug-in parser.\n");
+    // init parser
+	parser_init(langmap, gtags_parser);
+
+    // free
+    if (NULL != langmap)
+        free(langmap);
+    if (NULL != gtags_parser)
+        free(gtags_parser);
+    strbuf_close(sb);
+}
+
+static void usage(void)
+{
+	if (!qflag)
+		fputs(usage_const, stderr);
+	exit(2);
+}
+
+static void help(void)
+{
+	fputs(usage_const, stdout);
+	fputs(help_const, stdout);
+	exit(0);
+}
+
 #if 0
 static sqlite3 *db = NULL;
 static sqlite3_stmt *ptStmt = NULL;
@@ -876,18 +1149,17 @@ static void CloseDB()
 static void put_syms_sqlite(int type, const char *tag,
 		int lno, const char *path, const char *line_image, void *arg)
 {
-	/*
-	static sqlite3 *db = NULL;
-	if (NULL == db)
-	{
-		db = OpenDB();
-		if (NULL == db)
-		{
-			printf("db null, find tag type %d: %s\n", type, tag);
-			return;
-		}
-	}
-	*/
+	// static sqlite3 *db = NULL;
+	// if (NULL == db)
+	// {
+	// 	db = OpenDB();
+	// 	if (NULL == db)
+	// 	{
+	// 		printf("db null, find tag type %d: %s\n", type, tag);
+	// 		return;
+	// 	}
+	// }
+
 	if (NULL == db || NULL == ptStmt)
 	{
 		printf("db open failed\n");
@@ -929,235 +1201,3 @@ static void put_syms_sqlite(int type, const char *tag,
 }
 #endif
 
-/*
- * updatetags: update tag file.
- *
- *	i)	dbpath		directory in which tag file exist
- *	i)	root		root directory of source tree
- *	i)	deleteset	bit array of fid of deleted or modified files 
- *	i)	addlist		\0 separated list of added or modified files
- */
-void
-updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addlist)
-{
-	struct put_func_data data;
-	int seqno, flags;
-	const char *path, *start, *end;
-
-	if (vflag)
-		fprintf(stderr, "[%s] Updating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
-	/*
-	 * Open tag files.
-	 */
-	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_MODIFY, 0);
-	if (test("f", makepath(dbpath, dbname(GRTAGS), NULL))) {
-		data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_MODIFY, 0);
-	} else {
-		/*
-		 * If you set NULL to data.gtop[GRTAGS], parse_file() doesn't write to
-		 * GRTAGS. See put_syms().
-		 */
-		data.gtop[GRTAGS] = NULL;
-	}
-	/*
-	 * Delete tags from GTAGS.
-	 */
-	if (!idset_empty(deleteset)) {
-		if (vflag) {
-			char fid[MAXFIDLEN];
-			int total = idset_count(deleteset);
-			unsigned int id;
-
-			seqno = 1;
-			for (id = idset_first(deleteset); id != END_OF_ID; id = idset_next(deleteset)) {
-				snprintf(fid, sizeof(fid), "%d", id);
-				path = gpath_fid2path(fid, NULL);
-				if (path == NULL)
-					die("GPATH is corrupted.");
-				fprintf(stderr, " [%d/%d] deleting tags of %s\n", seqno++, total, path + 2);
-			}
-		}
-		gtags_delete(data.gtop[GTAGS], deleteset);
-		if (data.gtop[GRTAGS] != NULL)
-			gtags_delete(data.gtop[GRTAGS], deleteset);
-	}
-	/*
-	 * Set flags.
-	 */
-	data.gtop[GTAGS]->flags = 0;
-	if (extractmethod)
-		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
-	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
-	flags = 0;
-	if (vflag)
-		flags |= PARSER_VERBOSE;
-	if (debug)
-		flags |= PARSER_DEBUG;
-	if (wflag)
-		flags |= PARSER_WARNING;
-	/*
-	 * Add tags to GTAGS and GRTAGS.
-	 */
-	start = strbuf_value(addlist);
-	end = start + strbuf_getlen(addlist);
-	seqno = 0;
-	for (path = start; path < end; path += strlen(path) + 1) {
-		gpath_put(path, GPATH_SOURCE);
-		data.fid = gpath_path2fid(path, NULL);
-		if (data.fid == NULL)
-			die("GPATH is corrupted.('%s' not found)", path);
-		if (vflag)
-			fprintf(stderr, " [%d/%d] extracting tags of %s\n", ++seqno, total, path + 2);
-		parse_file(path, flags, put_syms, &data);
-		// parse_file(path, flags, put_syms_sqlite, &data);
-		gtags_flush(data.gtop[GTAGS], data.fid);
-		if (data.gtop[GRTAGS] != NULL)
-			gtags_flush(data.gtop[GRTAGS], data.fid);
-	}
-	parser_exit();
-	gtags_close(data.gtop[GTAGS]);
-	if (data.gtop[GRTAGS] != NULL)
-		gtags_close(data.gtop[GRTAGS]);
-}
-/*
- * createtags: create tags file
- *
- *	i)	dbpath	dbpath directory
- *	i)	root	root directory of source tree
- */
-void
-createtags(const char *dbpath, const char *root)
-{
-	STATISTICS_TIME *tim;
-	STRBUF *sb = strbuf_open(0);
-	struct put_func_data data;
-	int openflags, flags, seqno;
-	const char *path;
-    char realPath[MAXPATHLEN + 1];
-    char normalPath[MAXPATHLEN + 1];
-    char rootSlash[MAXPATHLEN + 1];
-
-    sprintf(rootSlash, "%s/", root);
-
-	tim = statistics_time_start("Time of creating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
-	if (vflag)
-		fprintf(stderr, "[%s] Creating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
-	openflags = cflag ? GTAGS_COMPACT : 0;
-	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_CREATE, openflags);
-	data.gtop[GTAGS]->flags = 0;
-	if (extractmethod)
-		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
-	data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_CREATE, openflags);
-	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
-	flags = 0;
-	if (vflag)
-		flags |= PARSER_VERBOSE;
-	if (debug)
-		flags |= PARSER_DEBUG;
-	if (wflag)
-		flags |= PARSER_WARNING;
-	/*
-	 * Add tags to GTAGS and GRTAGS.
-	 */
-	if (file_list)
-		find_open_filelist(file_list, root);
-	else
-		find_open(NULL);
-	seqno = 0;
-	// close data base
-	// OpenDB();
-	
-	while ((path = find_read()) != NULL) {
-		if (*path == ' ') {
-			path++;
-			if (!test("b", path))
-				gpath_put(path, GPATH_OTHER);
-			continue;
-		}
-#if 1
-        // check whether path exist
-        char *res = realpath(path, realPath);
-        if (NULL == res)
-        {
-            warning("read link failed %s to %s", path, realPath);
-            continue;
-        }
-        res = normalize(realPath, rootSlash, dbpath, normalPath, MAXPATHLEN);
-        if (NULL == res)
-        {
-            warning("normailize path failed %s to %s", path, realPath);
-            continue;
-        }
-        // always use real path instead
-        if (NULL != gpath_path2fid(normalPath, NULL))
-        {
-            warning("duplicated symbol link deprecated: %s", path);
-            continue;
-        }
-        path = normalPath;
-#endif
-		gpath_put(path, GPATH_SOURCE);
-		data.fid = gpath_path2fid(path, NULL);
-		if (data.fid == NULL)
-			die("GPATH is corrupted.('%s' not found)", path);
-		seqno++;
-		if (vflag)
-			fprintf(stderr, " [%d] extracting tags of %s\n", seqno, path + 2);
-		parse_file(path, flags, put_syms, &data);
-		// parse_file(path, flags, put_syms_sqlite, &data);
-		gtags_flush(data.gtop[GTAGS], data.fid);
-		gtags_flush(data.gtop[GRTAGS], data.fid);
-	}
-	// open database
-	// CloseDB();
-	
-	total = seqno;
-	parser_exit();
-	find_close();
-	statistics_time_end(tim);
-	tim = statistics_time_start("Time of flushing B-tree cache");
-	gtags_close(data.gtop[GTAGS]);
-	gtags_close(data.gtop[GRTAGS]);
-	statistics_time_end(tim);
-	strbuf_reset(sb);
-	if (getconfs("GTAGS_extra", sb)) {
-		tim = statistics_time_start("Time of executing GTAGS_extra command");
-		if (system(strbuf_value(sb)))
-			fprintf(stderr, "GTAGS_extra command failed: %s\n", strbuf_value(sb));
-		statistics_time_end(tim);
-	}
-	strbuf_reset(sb);
-	if (getconfs("GRTAGS_extra", sb)) {
-		tim = statistics_time_start("Time of executing GRTAGS_extra command");
-		if (system(strbuf_value(sb)))
-			fprintf(stderr, "GRTAGS_extra command failed: %s\n", strbuf_value(sb));
-		statistics_time_end(tim);
-	}
-	strbuf_close(sb);
-}
-/*
- * printconf: print configuration data.
- *
- *	i)	name	label of config data
- *	r)		exit code
- */
-int
-printconf(const char *name)
-{
-	int num;
-	int exist = 1;
-
-	if (getconfn(name, &num))
-		fprintf(stdout, "%d\n", num);
-	else if (getconfb(name))
-		fprintf(stdout, "1\n");
-	else {
-		STRBUF *sb = strbuf_open(0);
-		if (getconfs(name, sb))
-			fprintf(stdout, "%s\n", strbuf_value(sb));
-		else
-			exist = 0;
-		strbuf_close(sb);
-	}
-	return exist;
-}
