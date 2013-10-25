@@ -614,7 +614,7 @@ static void createTags(const struct parser_param *param)
 			break;
 		case CHAR_BRACE_CLOSE:
 			processBraceClose(param);
-			break;
+            continue; // remaint token space for nestted bracek open
 		case CHAR_PARENTH_OPEN:
 			parseParentheses(param, CurrentStatementInfo);
 			break;
@@ -640,19 +640,15 @@ static void createTags(const struct parser_param *param)
 			break;
 		}
 
-		// remaint token space for nestted bracek open
-		if (CHAR_BRACE_CLOSE != cc)
+		// treate as ref symbol whatever
+		tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
+		if (SYMBOL == prev2->cc)
 		{
-			// treate as ref symbol whatever
-			tokenInfo *prev2 = prevToken(CurrentStatementInfo, 2);
-			if (SYMBOL == prev2->cc)
-			{
-				putSymbol(param, PARSER_REF_SYM,
-						strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
-				resetToken(prev2);
-			}
-			advanceToken(CurrentStatementInfo);
+			putSymbol(param, PARSER_REF_SYM,
+					strbuf_value(getTokenName(prev2)), prev2->lno, NULL);
+			resetToken(prev2);
 		}
+		advanceToken(CurrentStatementInfo);
 	}
 }
 
