@@ -681,7 +681,7 @@ static void processBraceOpen(const struct parser_param *param)
 		}
 		resetStatementToken(CurrentStatementInfo, 2);
 	}
-	else if (TOKEN_NAME == prev->type &&
+	else if (// TOKEN_NAME == prev->type &&
 			!isInScope(CurrentStatementInfo, DECL_FUNCTION) &&
 			(DECL_STRUCT == CurrentStatementInfo->declaration || 
 			 DECL_CLASS == CurrentStatementInfo->declaration || 
@@ -690,8 +690,9 @@ static void processBraceOpen(const struct parser_param *param)
 			 DECL_NAMESPACE == CurrentStatementInfo->declaration))
 	{
 		// save struct / union / class / enum / namespace defination
-		putSymbol(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
-				prev->lno, NULL);
+        if (TOKEN_NAME == prev->type)
+            putSymbol(param, PARSER_DEF, strbuf_value(getTokenName(prev)),
+                    prev->lno, NULL);
 		CurrentStatementInfo->isInStructureBody = TRUE;
 		resetStatementToken(CurrentStatementInfo, 2);
 	}
@@ -1345,19 +1346,24 @@ static int cppNextToken(const struct parser_param *param)
 		}
 		case CPP_UNION:
 			CurrentStatementInfo->declaration = DECL_UNION;
-			break;
+			// break;
+            continue;
 		case CPP_STRUCT:
 			CurrentStatementInfo->declaration = DECL_STRUCT;
-			break;
+			// break;
+            continue;
 		case CPP_ENUM:
 			CurrentStatementInfo->declaration = DECL_ENUM;
-			break;
+			// break;
+            continue;
 		case CPP_CLASS:
 			CurrentStatementInfo->declaration = DECL_CLASS;
-			break;
+			// break;
+            continue;
 		case CPP_NAMESPACE:
 			CurrentStatementInfo->declaration = DECL_NAMESPACE;
-			break;
+			// break;
+            continue;
 		case CPP_WCOLON:
         {
 			// ignore namespace

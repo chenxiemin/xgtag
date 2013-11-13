@@ -1,6 +1,6 @@
 /* This file is generated automatically by convert.pl from gtags/manual.in. */
 const char *progname = "gtags";
-const char *usage_const = "Usage: gtags [-ciIOqvw][-d tag-file][-f file][dbpath]\n";
+const char *usage_const = "Usage: gtags [-ciOqvw][-d tag-file][-f file][dbpath]\n";
 const char *help_const = "Options:\n\
 --accept-dotfiles\n\
        Accept dot files and dot directories. By default, gtags ignore them.\n\
