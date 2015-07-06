@@ -30,7 +30,7 @@
 #else
 #include <strings.h>
 #endif
-#include <ltdl.h>
+// #include <ltdl.h>
 
 #include "parser.h"
 #include "internal.h"
@@ -116,6 +116,7 @@ struct lang_entry {
 	const char *lt_dl_name;
 };
 
+#if 0
 struct plugin_entry {
 	STAILQ_ENTRY(plugin_entry) next;
 	lt_dlhandle handle;
@@ -124,6 +125,7 @@ struct plugin_entry {
 
 static STAILQ_HEAD(plugin_list, plugin_entry)
 	plugin_list = STAILQ_HEAD_INITIALIZER(plugin_list);
+#endif
 static char *langmap_saved, *pluginspec_saved;
 
 /*
@@ -139,6 +141,7 @@ static char *langmap_saved, *pluginspec_saved;
 static void
 load_plugin_parser(const char *pluginspec)
 {
+#if 0
 	char *p, *q;
 	const char *lt_dl_name, *parser_name;
 	struct plugin_entry *pent;
@@ -181,6 +184,9 @@ load_plugin_parser(const char *pluginspec)
 		if (p == NULL)
 			break;
 	}
+#else
+    die_with_code(2, "unimplement");
+#endif
 }
 
 /*
@@ -189,6 +195,7 @@ load_plugin_parser(const char *pluginspec)
 static void
 unload_plugin_parser(void)
 {
+#if 0
 	struct plugin_entry *pent;
 
 	if (pluginspec_saved == NULL)
@@ -201,6 +208,9 @@ unload_plugin_parser(void)
 	}
 	lt_dlexit();
 	free(pluginspec_saved);
+#else
+    die_with_code(2, "unimplement");
+#endif
 }
 
 /*
@@ -234,10 +244,13 @@ get_lang_entry(const char *lang)
 	/*
 	 * Priority 1: locates in the plugin parser list.
 	 */
+#if 0
 	STAILQ_FOREACH(pent, &plugin_list, next) {
 		if (strcmp(lang, pent->entry.lang_name) == 0)
 			return &pent->entry;
 	}
+#endif
+
 	/*
 	 * Priority 2: locates in the built-in parser list.
 	 */
@@ -286,8 +299,10 @@ parser_init(const char *langmap, const char *pluginspec)
 	langmap_saved = check_strdup(langmap);
 
 	/* load shared objects. */
+#if 0
 	if (pluginspec != NULL)
 		load_plugin_parser(pluginspec);
+#endif
 
 	/*
 	 * This is a hack for FreeBSD.
@@ -307,7 +322,9 @@ parser_init(const char *langmap, const char *pluginspec)
 void
 parser_exit(void)
 {
+#if 0
 	unload_plugin_parser();
+#endif
 	free(langmap_saved);
 }
 

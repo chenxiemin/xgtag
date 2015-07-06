@@ -109,7 +109,11 @@ strhash_open(int buckets)
 struct sh_entry *
 strhash_assign(STRHASH *sh, const char *name, int force)
 {
+#if 1
 	struct sh_head *head = &sh->htab[__hash_string(name) % sh->buckets];
+#else
+	struct sh_head *head = &sh->htab[hash_string(name) % sh->buckets];
+#endif
 	struct sh_entry *entry;
 
 	/*
