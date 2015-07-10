@@ -39,6 +39,12 @@
 # endif
 #endif
 
+#define LOGV(...) message(__VA_ARGS__)
+#define LOGD(...) message(__VA_ARGS__)
+#define LOGI(...) warning(__VA_ARGS__)
+#define LOGW(...) warning(__VA_ARGS__)
+#define LOGE(...) warning(__VA_ARGS__)
+
 extern	const char *progname;
 
 void setquiet(void);

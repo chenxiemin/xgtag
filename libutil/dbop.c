@@ -74,7 +74,7 @@
  */
 static void start_sort_process(DBOP *);
 static void terminate_sort_process(DBOP *);
-static char *sortnotfound = "POSIX sort program not found. If available, the program will be speed up.\nPlease see ./configure --help.";
+#define SORT_NOT_FOUND "POSIX sort program not found. If available, the program will be speed up.\nPlease see ./configure --help."
 /*
  * 1. DJGPP
  */
@@ -122,7 +122,7 @@ start_sort_process(DBOP *dbop) {
 	path = strrchr(_pgmptr, '\\');
 	sprintf(sort, "%.*s\\sort.exe", path - _pgmptr, _pgmptr);
 	if (!test("fx", sort)) {
-		warning(sortnotfound);
+		warning(SORT_NOT_FOUND);
 		informed = 1;
 		return;
 	}
@@ -187,7 +187,7 @@ start_sort_process(DBOP *dbop) {
 		static int informed;
 
 		if (!informed) {
-			warning(sortnotfound);
+			warning(SORT_NOT_FOUND);
 			informed = 1;
 		}
 		return;
@@ -383,7 +383,8 @@ dbop_put(DBOP *dbop, const char *name, const char *data)
 		break;
 	case RET_ERROR:
 	case RET_SPECIAL:
-		die(dbop->put_errmsg ? dbop->put_errmsg : "dbop_put failed.");
+        // dbop->put_errmsg ? dbop->put_errmsg : "dbop_put failed.";
+		die("dbop_put failed: %s", dbop->put_errmsg);
 	}
 }
 /*
@@ -419,7 +420,8 @@ dbop_put_withlen(DBOP *dbop, const char *name, const char *data, int length)
 		break;
 	case RET_ERROR:
 	case RET_SPECIAL:
-		die(dbop->put_errmsg ? dbop->put_errmsg : "dbop_put_withlen failed.");
+        // dbop->put_errmsg ? dbop->put_errmsg : "dbop_put_withlen failed."
+		die("dbop_put_withlen failed: %s", dbop->put_errmsg);
 	}
 }
 /*

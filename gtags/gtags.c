@@ -49,15 +49,21 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#include "getopt.h"
+#include <sys/stat.h>
+#include <errno.h>
 
+#include "getopt.h"
 #include "global.h"
 #include "parser.h"
 #include "const.h"
+#include "opt.h"
 
-// #include "/home/cxm/src/global/sqlite3.h"
-#include <sys/stat.h>
-#include <errno.h>
+#include "wparser.h"
+#include "project.h"
+
+struct Options GlobalOptions = { 0 };
+PParser GlobalParser = NULL;
+PProjectContext GlobalProject = NULL;
 
 int main(int, char **);
 static void readOptions(int argc, char **argv);
@@ -66,10 +72,9 @@ static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
 void updatetags(const char *, const char *, IDSET *, STRBUF *);
-void createtags(const char *, const char *);
+void createTags(const char *, const char *);
 int printconf(const char *);
 
-int cflag;					/* compact format */
 int iflag;					/* incremental update */
 /*
 int Iflag;					// make  idutils index
@@ -156,74 +161,32 @@ static struct option const long_options[] = {
 
 int main(int argc, char **argv)
 {
-	// STRBUF *sb = strbuf_open(0);
-	STATISTICS_TIME *tim;
-
-	logging_arguments(argc, argv);
-
     // read options
     readOptions(argc, argv);
 	// load configuration file.
 	openconf();
     // init parser
-    initParser();
-    /*
-	if (getconfb("extractmethod"))
-		extractmethod = 1;
-	strbuf_reset(sb);
-	if (getconfs("langmap", sb))
-		langmap = check_strdup(strbuf_value(sb));
-	strbuf_reset(sb);
-	if (getconfs("gtags_parser", sb))
-		gtags_parser = check_strdup(strbuf_value(sb));
-	// initialize parser.
-	if (vflag && gtags_parser)
-		fprintf(stderr, " Using plug-in parser.\n");
-	parser_init(langmap, gtags_parser);
-    */
-	
+    GlobalParser = wparser_open();
+    if (NULL == GlobalParser) {
+        LOGE("Cannot open parser");
+        return -1;
+    }
+
 	// Start statistics.
 	init_statistics();
-	
+
+    // make tag processing
 	if (iflag)
 		incremental(dbpath, cwd); // single update a file
     else
-        createtags(dbpath, cwd); // create GTAGS and GRTAGS
+        createTags(dbpath, cwd); // create GTAGS and GRTAGS
 	
-#if 0
-	// create idutils index.
-	if (Iflag) {
-		tim = statistics_time_start("Time of creating ID");
-		if (vflag)
-			fprintf(stderr, "[%s] Creating indexes for idutils.\n", now());
-		strbuf_reset(sb);
-		strbuf_puts(sb, "mkid");
-		if (vflag)
-			strbuf_puts(sb, " -v");
-		strbuf_sprintf(sb, " --file='%s/ID'", dbpath);
-		if (vflag) {
-#ifdef __DJGPP__
-			if (is_unixy())	/* test for 4DOS as well? */
-#endif
-			strbuf_puts(sb, " 1>&2");
-		} else {
-			strbuf_puts(sb, " >" NULL_DEVICE);
-		}
-		if (debug)
-			fprintf(stderr, "executing mkid like: %s\n", strbuf_value(sb));
-		if (system(strbuf_value(sb)))
-			die("mkid failed: %s", strbuf_value(sb));
-		if (chmod(makepath(dbpath, "ID", NULL), 0644) < 0)
-			die("cannot chmod ID file.");
-		statistics_time_end(tim);
-	}
-#endif
+    LOGI("[%s] Done.\n", now());
 
-	if (vflag)
-		fprintf(stderr, "[%s] Done.\n", now());
+    // clean up
+    wparser_close(&GlobalParser);
+
 	closeconf();
-	// strbuf_close(sb);
-	print_statistics(statistics);
 
 	return 0;
 }
@@ -235,12 +198,9 @@ int main(int argc, char **argv)
  *	i)	root	root directory of source tree
  *	r)		0: not updated, 1: updated
  */
-int
-incremental(const char *dbpath, const char *root)
+int incremental(const char *dbpath, const char *root)
 {
 	STATISTICS_TIME *tim;
-	struct stat statp;
-	time_t gtags_mtime;
 	STRBUF *addlist = strbuf_open(0);
 	STRBUF *deletelist = strbuf_open(0);
 	STRBUF *addlist_other = strbuf_open(0);
@@ -261,17 +221,14 @@ incremental(const char *dbpath, const char *root)
 		die("Old version tag file found. Please remake it.");
 
 	tim = statistics_time_start("Time of inspecting %s and %s.", dbname(GTAGS), dbname(GRTAGS));
-	if (vflag) {
-		fprintf(stderr, " Tag found in '%s'.\n", dbpath);
-		fprintf(stderr, " Incremental updating.\n");
-	}
-	/*
-	 * get modified time of GTAGS.
-	 */
+    LOGD("Incremental updating for tag: %s", dbpath);
+
+    // get modified time of GTAGS.
+	struct stat statp;
 	path = makepath(dbpath, dbname(GTAGS), NULL);
 	if (stat(path, &statp) < 0)
 		die("stat failed '%s'.", path);
-	gtags_mtime = statp.st_mtime;
+    time_t gtags_mtime = statp.st_mtime;
 
 	if (gpath_open(dbpath, 2) < 0)
 		die("GPATH not found.");
@@ -285,9 +242,8 @@ incremental(const char *dbpath, const char *root)
 	deleteset = idset_open(gpath_nextkey());
 	findset = idset_open(gpath_nextkey());
 	total = 0;
-	/*
-	 * Make add list and delete list for update.
-	 */
+
+	// Make add list and delete list for update.
 	if (single_update) {
 		int type;
 		const char *fid;
@@ -445,10 +401,6 @@ exit:
 /*
  * callback functions for built-in parser
  */
-struct put_func_data {
-	GTOP *gtop[GTAGLIM];
-	const char *fid;
-};
 static void
 put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
 {
@@ -504,13 +456,13 @@ updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addli
 	/*
 	 * Delete tags from GTAGS.
 	 */
+    seqno = 1;
 	if (!idset_empty(deleteset)) {
 		if (vflag) {
 			char fid[MAXFIDLEN];
 			int total = idset_count(deleteset);
 			unsigned int id;
 
-			seqno = 1;
 			for (id = idset_first(deleteset); id != END_OF_ID; id = idset_next(deleteset)) {
 				snprintf(fid, sizeof(fid), "%d", id);
 				path = gpath_fid2path(fid, NULL);
@@ -523,6 +475,7 @@ updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addli
 		if (data.gtop[GRTAGS] != NULL)
 			gtags_delete(data.gtop[GRTAGS], deleteset);
 	}
+    LOGI("delete tag with seq number: %d", seqno);
 	/*
 	 * Set flags.
 	 */
@@ -550,31 +503,28 @@ updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addli
 		if (data.fid == NULL)
 			die("GPATH is corrupted.('%s' not found)", path);
 		if (vflag)
-			fprintf(stderr, " [%d/%d] extracting tags of %s\n", ++seqno, total, path + 2);
+			fprintf(stderr, " [%d/%d] extracting tags of %s", ++seqno, total, path + 2);
 		parse_file(path, flags, put_syms, &data);
-		// parse_file(path, flags, put_syms_sqlite, &data);
 		gtags_flush(data.gtop[GTAGS], data.fid);
 		if (data.gtop[GRTAGS] != NULL)
 			gtags_flush(data.gtop[GRTAGS], data.fid);
 	}
-	parser_exit();
+    LOGI("add tag with seq number: %d", seqno);
 	gtags_close(data.gtop[GTAGS]);
 	if (data.gtop[GRTAGS] != NULL)
 		gtags_close(data.gtop[GRTAGS]);
 }
+
 /*
- * createtags: create tags file
+ * createTags: create tags file
  *
  *	i)	dbpath	dbpath directory
  *	i)	root	root directory of source tree
  */
-void
-createtags(const char *dbpath, const char *root)
+void createTags(const char *dbpath, const char *root)
 {
 	STATISTICS_TIME *tim;
-	STRBUF *sb = strbuf_open(0);
 	struct put_func_data data;
-	int openflags, flags, seqno;
 	const char *path;
     char realPath[MAXPATHLEN + 1];
     char normalPath[MAXPATHLEN + 1];
@@ -582,39 +532,22 @@ createtags(const char *dbpath, const char *root)
 
     sprintf(rootSlash, "%s/", root);
 
-	tim = statistics_time_start("Time of creating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
-	if (vflag)
-		fprintf(stderr, "[%s] Creating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
-	openflags = cflag ? GTAGS_COMPACT : 0;
-	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_CREATE, openflags);
-	data.gtop[GTAGS]->flags = 0;
-	// if (extractmethod)
-    if (getconfb("extractmethod"))
-		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
-	data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_CREATE, openflags);
-	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
-	flags = 0;
-	if (vflag)
-		flags |= PARSER_VERBOSE;
-	if (debug)
-		flags |= PARSER_DEBUG;
-	if (wflag)
-		flags |= PARSER_WARNING;
+    GlobalProject = project_open(0, root, dbpath);
+    if (NULL == GlobalProject) {
+        LOGE("Cannot open project");
+        return;
+    }
+    GlobalProject->parser = GlobalParser;
+
 	/*
 	 * Add tags to GTAGS and GRTAGS.
 	 */
 	if (file_list)
-    {
-        if (vflag)
-            fprintf(stderr, " Using '%s' as a file list.\n", file_list);
 		find_open_filelist(file_list, root);
-    }
-	else
+    else
 		find_open(NULL);
-	seqno = 0;
-	// close data base
-	// OpenDB();
-	
+
+	int seqno = 0;
 	while ((path = find_read()) != NULL) {
 		if (*path == ' ') {
 			path++;
@@ -625,63 +558,32 @@ createtags(const char *dbpath, const char *root)
 #if 1
         // check whether path exist
         char *res = realpath(path, realPath);
-        if (NULL == res)
-        {
-            warning("read link failed %s to %s", path, realPath);
+        if (NULL == res) {
+            LOGE("read link failed %s to %s", path, realPath);
             continue;
         }
         res = normalize(realPath, rootSlash, dbpath, normalPath, MAXPATHLEN);
-        if (NULL == res)
-        {
-            warning("normailize path failed %s to %s", path, realPath);
+        if (NULL == res) {
+            LOGE("normailize path failed %s to %s", path, realPath);
             continue;
         }
         // always use real path instead
-        if (NULL != gpath_path2fid(normalPath, NULL))
-        {
-            warning("duplicated symbol link deprecated: %s", path);
+        if (NULL != gpath_path2fid(normalPath, NULL)) {
+            LOGE("duplicated symbol link deprecated: %s", path);
             continue;
         }
         path = normalPath;
 #endif
 		gpath_put(path, GPATH_SOURCE);
-		data.fid = gpath_path2fid(path, NULL);
-		if (data.fid == NULL)
-			die("GPATH is corrupted.('%s' not found)", path);
-		seqno++;
-		if (vflag)
-			fprintf(stderr, " [%d] extracting tags of %s\n", seqno, path + 2);
-		parse_file(path, flags, put_syms, &data);
-		// parse_file(path, flags, put_syms_sqlite, &data);
-		gtags_flush(data.gtop[GTAGS], data.fid);
-		gtags_flush(data.gtop[GRTAGS], data.fid);
+        LOGD(" [%d] extracting tags of %s", ++seqno, path + 2);
+
+        project_add(GlobalProject, path, gpath_path2fid(path, NULL));
 	}
-	// open database
-	// CloseDB();
 	
-	total = seqno;
-	parser_exit();
+    // clean up
 	find_close();
-	statistics_time_end(tim);
-	tim = statistics_time_start("Time of flushing B-tree cache");
-	gtags_close(data.gtop[GTAGS]);
-	gtags_close(data.gtop[GRTAGS]);
-	statistics_time_end(tim);
-	strbuf_reset(sb);
-	if (getconfs("GTAGS_extra", sb)) {
-		tim = statistics_time_start("Time of executing GTAGS_extra command");
-		if (system(strbuf_value(sb)))
-			fprintf(stderr, "GTAGS_extra command failed: %s\n", strbuf_value(sb));
-		statistics_time_end(tim);
-	}
-	strbuf_reset(sb);
-	if (getconfs("GRTAGS_extra", sb)) {
-		tim = statistics_time_start("Time of executing GRTAGS_extra command");
-		if (system(strbuf_value(sb)))
-			fprintf(stderr, "GRTAGS_extra command failed: %s\n", strbuf_value(sb));
-		statistics_time_end(tim);
-	}
-	strbuf_close(sb);
+
+    project_close(&GlobalProject);
 }
 
 /*
@@ -756,7 +658,7 @@ static void readOptions(int argc, char **argv)
 			set_accept_dotfiles();
 			break;
 		case 'c':
-			cflag++;
+			GlobalOptions.cflag++;
 			break;
 		case 'd':
 			dump_target = optarg;
@@ -1014,190 +916,4 @@ static void help(void)
 	fputs(help_const, stdout);
 	exit(0);
 }
-
-#if 0
-static sqlite3 *db = NULL;
-static sqlite3_stmt *ptStmt = NULL;
-
-static void OpenDB()
-{
-	// delete old
-	if (0 == access("test.db", F_OK))
-		remove("test.db");
-   	int ret = sqlite3_open(":memory:", &db);
-	if (0 != ret)
-	{
-		db = NULL;
-		printf("Cannot open data base: %d\n", ret);
-	}
-	const char *sql = "CREATE TABLE tag("\
-					   "id INTEGER PRIMARY KEY AUTOINCREMENT," \
-					   "tag TEXT NOT NULL,"\
-					   "lno INT NOT NULL,"\
-					   "line TEXT)";
-	static const char *prepare = "INSERT INTO tag (tag, lno, line) VALUES (?1, ?2, ?3)";
-	char *zErrMsg = NULL;
-	do
-	{
-		ret = sqlite3_exec(db, sql, NULL, 0, &zErrMsg);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot create table %d: %s\n", ret, zErrMsg);
-			break;
-		}
-		sqlite3_free(zErrMsg);
-		zErrMsg = NULL;
-
-		// sqlite setting
-		ret = sqlite3_exec(db, "PRAGMA synchronous=OFF", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot set sync off: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_exec(db, "PRAGMA count_changes=OFF", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot set count changes off: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_exec(db, "PRAGMA journal_mode=MEMORY", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot set journal mode: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_exec(db, "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot set temp store: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_exec(db, "PRAGMA cache_size=-102400", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Cannot set cache size: %d\n", ret);
-			break;
-		}
-
-		// begin transaction
-		ret = sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("Begin Transaction failed: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_prepare_v2(db, prepare, -1, &ptStmt, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("prepare failed: %d\n", ret);
-			break;
-		}
-
-		return;
-	} while (0);
-
-	if (NULL != zErrMsg)
-		sqlite3_free(zErrMsg);
-	sqlite3_close(db);
-	db = NULL;
-}
-
-static void CloseDB()
-{
-	sqlite3 *fileDB = NULL;
-	sqlite3_backup *ptBackup = NULL;
-	do
-	{
-		int ret = sqlite3_exec(db, "COMMIT TRANSACTION", NULL, NULL, NULL);
-		if (SQLITE_OK != ret)
-		{
-			printf("commit transaction failed: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_open("test.db", &fileDB);
-		if (SQLITE_OK != ret)
-		{
-			printf("open file db failed\n");
-			break;
-		}
-		ptBackup = sqlite3_backup_init(fileDB, "main", db, "main");
-		if (NULL == ptBackup)
-		{
-			printf("backup db failed\n");
-			break;
-		}
-		ret = sqlite3_backup_step(ptBackup, -1);
-		if (SQLITE_DONE != ret)
-		{
-			printf("backup step failed: %d\n", ret);
-			break;
-		}
-		ret = sqlite3_backup_finish(ptBackup);
-		if (SQLITE_OK != ret)
-		{
-			printf("backup finish failed: %d\n", ret);
-			break;
-		}
-	} while (0);
-	if (NULL != db)
-		sqlite3_close(db);
-	if (NULL != fileDB)
-		sqlite3_close(db);
-}
-
-static void put_syms_sqlite(int type, const char *tag,
-		int lno, const char *path, const char *line_image, void *arg)
-{
-	// static sqlite3 *db = NULL;
-	// if (NULL == db)
-	// {
-	// 	db = OpenDB();
-	// 	if (NULL == db)
-	// 	{
-	// 		printf("db null, find tag type %d: %s\n", type, tag);
-	// 		return;
-	// 	}
-	// }
-
-	if (NULL == db || NULL == ptStmt)
-	{
-		printf("db open failed\n");
-		return;
-	}
-	if (NULL == tag)
-	{
-		printf("tag null\n");
-		return;
-	}
-	int len = strlen(tag);
-	if (NULL != path)
-		len += strlen(path);
-	if (NULL != line_image)
-		len += strlen(line_image);
-	if (len > 2000)
-	{
-		printf("tag %s too long\n", tag);
-		return;
-	}
-
-	/*
-	char buf[2048];
-	sprintf(buf, "INSERT INTO tag(tag, lno, line) values ('%s', %d, '%s')",
-			tag, lno, line_image);
-	int ret = sqlite3_exec(db, buf, NULL, 0, NULL);
-	if (SQLITE_OK != ret)
-		printf("Cannot insert tag %s: %d\n", tag, ret);
-	*/
-
-	sqlite3_bind_text(ptStmt, 1, tag, -1, SQLITE_STATIC);
-	sqlite3_bind_int(ptStmt, 2, lno);
-	sqlite3_bind_text(ptStmt, 3, line_image, -1, SQLITE_STATIC);
-	int ret = sqlite3_step(ptStmt);
-	if (SQLITE_DONE != ret)
-		printf("Cannot step stmt: %d\n", ret);
-	
-	sqlite3_reset(ptStmt);
-}
-#endif
 
