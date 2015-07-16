@@ -33,7 +33,12 @@ typedef struct
 static void project_parser_cb(int type, const char *tag,
         int lno, const char *path, const char *line_image, void *arg);
 
-PProjectContext project_open(int type, const char *root, const char *db)
+// simple project operation functions
+int project_simple_add(void *thiz, const char *file, const char *fid);
+int project_simple_del(void *thiz, IDSET *delset);
+
+PProjectContext project_open(int type, const char *root,
+        const char *db, WPATH_MODE_T mode)
 {
     ProjectContextDefault *pcontext = (ProjectContextDefault *)
         malloc(sizeof(ProjectContextDefault));
@@ -47,13 +52,17 @@ PProjectContext project_open(int type, const char *root, const char *db)
 	int openflags = GlobalOptions.cflag ? GTAGS_COMPACT : 0;
     // open  gtags
 	pcontext->data.gtop[GTAGS] = gtags_open(
-            db, root, GTAGS, GTAGS_CREATE, openflags);
+            db, root, GTAGS, (int)mode, openflags);
     pcontext->data.gtop[GTAGS]->flags = GTAGS_EXTRACTMETHOD;
 
     // open grtags
 	pcontext->data.gtop[GRTAGS] = gtags_open(
-            db, root, GRTAGS, GTAGS_CREATE, openflags);
+            db, root, GRTAGS, (int)mode, openflags);
 	pcontext->data.gtop[GRTAGS]->flags = pcontext->data.gtop[GTAGS]->flags;
+
+    // fill operation
+    pcontext->super.add = project_simple_add;
+    pcontext->super.del = project_simple_del;
 
     return (PProjectContext)pcontext;
 }
@@ -77,20 +86,22 @@ void project_close(PProjectContext *ppcontext)
 
 int project_add(PProjectContext pcontext, const char *file, const char *fid)
 {
-    if (NULL == pcontext || NULL == pcontext->parser || NULL == file ||
-            NULL == fid) {
+    if (NULL == pcontext || NULL == pcontext->add) {
         LOGE("Invalid argument");
         return -1;
     }
 
-    ProjectContextDefault *pdcontext = (ProjectContextDefault *)pcontext;
+    return pcontext->add(pcontext, file, fid);
+}
 
-    pdcontext->data.fid = fid;
-    int res = wparser_parse(pcontext->parser, file, project_parser_cb, pcontext);
-    gtags_flush(pdcontext->data.gtop[GTAGS], fid);
-    gtags_flush(pdcontext->data.gtop[GRTAGS], fid);
+int project_del(PProjectContext pcontext, IDSET *deleteFileIDSet)
+{
+    if (NULL == pcontext || NULL == pcontext->del || NULL == deleteFileIDSet) {
+        LOGE("Invalid parameter");
+        return -1;
+    }
 
-    return res;
+    return pcontext->del(pcontext, deleteFileIDSet);
 }
 
 static void project_parser_cb(int type, const char *tag,
@@ -116,5 +127,32 @@ static void project_parser_cb(int type, const char *tag,
 		return;
 	}
 	gtags_put_using(gtop, tag, lno, pdata->fid, line_image);
+}
+
+int project_simple_add(void *thiz, const char *file, const char *fid)
+{
+    ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
+
+    if (NULL == pdcontext->super.parser || NULL == file || NULL == fid) {
+        LOGE("Invalid argument");
+        return -1;
+    }
+
+    pdcontext->data.fid = fid;
+    int res = wparser_parse(pdcontext->super.parser,
+            file, project_parser_cb, pdcontext);
+    gtags_flush(pdcontext->data.gtop[GTAGS], fid);
+    gtags_flush(pdcontext->data.gtop[GRTAGS], fid);
+
+    return res;
+}
+
+int project_simple_del(void *thiz, IDSET *delset)
+{
+    ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
+
+    gtags_delete(pdcontext->data.gtop[GTAGS], delset);
+    gtags_delete(pdcontext->data.gtop[GRTAGS], delset);
+    return 0;
 }
 

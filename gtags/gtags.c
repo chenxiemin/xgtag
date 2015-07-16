@@ -51,6 +51,7 @@
 #endif
 #include <sys/stat.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "getopt.h"
 #include "global.h"
@@ -59,11 +60,13 @@
 #include "opt.h"
 
 #include "wparser.h"
+#include "wpath.h"
 #include "project.h"
 
 struct Options GlobalOptions = { 0 };
 PParser GlobalParser = NULL;
 PProjectContext GlobalProject = NULL;
+PWPath GlobalPath = NULL;
 
 int main(int, char **);
 static void readOptions(int argc, char **argv);
@@ -71,14 +74,11 @@ static void initParser();
 static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
-void updatetags(const char *, const char *, IDSET *, STRBUF *);
+void updateTags(const char *, const char *, IDSET *, STRBUF *);
 void createTags(const char *, const char *);
 int printconf(const char *);
 
 int iflag;					/* incremental update */
-/*
-int Iflag;					// make  idutils index
-*/
 int Oflag;					/* use objdir */
 int qflag;					/* quiet mode */
 int wflag;					/* warning message */
@@ -161,19 +161,32 @@ static struct option const long_options[] = {
 
 int main(int argc, char **argv)
 {
+    // phase 1
+	// Start statistics.
+	init_statistics();
     // read options
     readOptions(argc, argv);
-	// load configuration file.
-	openconf();
+    // load configuration file.
+    openconf();
+
+    // phase 2
     // init parser
     GlobalParser = wparser_open();
     if (NULL == GlobalParser) {
         LOGE("Cannot open parser");
         return -1;
     }
-
-	// Start statistics.
-	init_statistics();
+    // decide mode
+    WPATH_MODE_T mode = WPATH_MODE_CREATE;
+    if (iflag)
+        mode = WPATH_MODE_MODIFY;
+    // init project
+    GlobalProject = project_open(0, dbpath, cwd, mode);
+    if (NULL == GlobalProject)
+        die("Cannot open project: %s %s", dbpath, cwd);
+    GlobalProject->parser = GlobalParser;
+    // init wpath
+    GlobalPath = wpath_open(dbpath, cwd, mode);
 
     // make tag processing
 	if (iflag)
@@ -181,11 +194,15 @@ int main(int argc, char **argv)
     else
         createTags(dbpath, cwd); // create GTAGS and GRTAGS
 	
-    LOGI("[%s] Done.\n", now());
+    LOGD("[%s] Done.\n", now());
 
     // clean up
+    // clean up phase 1
+    wpath_close(&GlobalPath);
+    project_close(&GlobalProject);
     wparser_close(&GlobalParser);
 
+    // cleanup phase2
 	closeconf();
 
 	return 0;
@@ -209,6 +226,7 @@ int incremental(const char *dbpath, const char *root)
 	const char *path;
 	unsigned int id, limit;
 
+#if 0
 	// Version check. If existing tag files are old enough
 	// gtagsopen() abort with error message.
 	GTOP *gtop = gtags_open(dbpath, cwd, GTAGS, GTAGS_MODIFY, 0);
@@ -219,8 +237,8 @@ int incremental(const char *dbpath, const char *root)
 	// removed by mistake.
 	if (!test("f", makepath(dbpath, dbname(GPATH), NULL)))
 		die("Old version tag file found. Please remake it.");
+#endif
 
-	tim = statistics_time_start("Time of inspecting %s and %s.", dbname(GTAGS), dbname(GRTAGS));
     LOGD("Incremental updating for tag: %s", dbpath);
 
     // get modified time of GTAGS.
@@ -230,46 +248,31 @@ int incremental(const char *dbpath, const char *root)
 		die("stat failed '%s'.", path);
     time_t gtags_mtime = statp.st_mtime;
 
+#if 0
 	if (gpath_open(dbpath, 2) < 0)
 		die("GPATH not found.");
-	/*
-	 * deleteset:
-	 *	The list of the path name which should be deleted from GPATH.
-	 * findset:
-	 *	The list of the path name which exists in the current project.
-	 *	A project is limited by the --file option.
-	 */
+#endif
+
+	
+	// deleteset:
+	//  The list of the path name which should be deleted from GPATH.
+	// findset:
+	//  The list of the path name which exists in the current project.
+	//  A project is limited by the --file option.
 	deleteset = idset_open(gpath_nextkey());
 	findset = idset_open(gpath_nextkey());
 	total = 0;
 
 	// Make add list and delete list for update.
 	if (single_update) {
-		int type;
-		const char *fid;
+        WPATH_SOURCE_TYPE_T type = wpath_getSourceType(single_update);
+        if (type != WPATH_SOURCE_TYPE_SOURCE)
+            goto exit;
 
-		if (skipthisfile(single_update))
-			goto exit;
-		if (test("b", single_update))
-			goto exit;
-		fid = gpath_path2fid(single_update, &type);
-		if (fid == NULL) {
-			/* new file */
-			type = issourcefile(single_update) ? GPATH_SOURCE : GPATH_OTHER;
-			if (type == GPATH_OTHER)
-				strbuf_puts0(addlist_other, single_update);
-			else {
-				strbuf_puts0(addlist, single_update);
-				total++;
-			}
-		} else {
-			/* update file */
-			if (type == GPATH_OTHER)
-				goto exit;
+        strbuf_puts0(addlist, single_update);
+		const char *fid = gpath_path2fid(single_update, NULL);
+        if (NULL != fid);
 			idset_add(deleteset, atoi(fid));
-			strbuf_puts0(addlist, single_update);
-			total++;
-		}
 	} else {
 		if (file_list)
 			find_open_filelist(file_list, root);
@@ -338,7 +341,7 @@ int incremental(const char *dbpath, const char *root)
 			}
 		}
 	}
-	statistics_time_end(tim);
+
 	/*
 	 * execute updating.
 	 */
@@ -349,7 +352,7 @@ int incremental(const char *dbpath, const char *root)
 		updated = 1;
 		tim = statistics_time_start("Time of updating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
 		if (!idset_empty(deleteset) || strbuf_getlen(addlist) > 0)
-			updatetags(dbpath, root, deleteset, addlist);
+			updateTags(dbpath, root, deleteset, addlist);
 		if (strbuf_getlen(deletelist) + strbuf_getlen(addlist_other) > 0) {
 			const char *start, *end, *p;
 
@@ -381,7 +384,9 @@ int incremental(const char *dbpath, const char *root)
 			utime(makepath(dbpath, dbname(db), NULL), NULL);
 		statistics_time_end(tim);
 	}
+
 exit:
+#if 0
 	if (vflag) {
 		if (updated)
 			fprintf(stderr, " Global databases have been modified.\n");
@@ -389,130 +394,57 @@ exit:
 			fprintf(stderr, " Global databases are up to date.\n");
 		fprintf(stderr, "[%s] Done.\n", now());
 	}
+#endif
 	strbuf_close(addlist);
 	strbuf_close(deletelist);
 	strbuf_close(addlist_other);
+#if 0
 	gpath_close();
+#endif
+
 	idset_close(deleteset);
 	idset_close(findset);
 
 	return updated;
 }
-/*
- * callback functions for built-in parser
- */
-static void
-put_syms(int type, const char *tag, int lno, const char *path, const char *line_image, void *arg)
-{
-	const struct put_func_data *data = arg;
-	GTOP *gtop;
-
-	switch (type) {
-	case PARSER_DEF:
-		gtop = data->gtop[GTAGS];
-		break;
-	case PARSER_REF_SYM:
-		gtop = data->gtop[GRTAGS];
-		if (gtop == NULL)
-			return;
-		break;
-	default:
-		return;
-	}
-	gtags_put_using(gtop, tag, lno, data->fid, line_image);
-}
-
 
 /*
- * updatetags: update tag file.
+ * updateTags: update tag file.
  *
  *	i)	dbpath		directory in which tag file exist
  *	i)	root		root directory of source tree
  *	i)	deleteset	bit array of fid of deleted or modified files 
  *	i)	addlist		\0 separated list of added or modified files
  */
-void
-updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addlist)
+void updateTags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addlist)
 {
-	struct put_func_data data;
-	int seqno, flags;
 	const char *path, *start, *end;
 
-	if (vflag)
-		fprintf(stderr, "[%s] Updating '%s' and '%s'.\n", now(), dbname(GTAGS), dbname(GRTAGS));
-	/*
-	 * Open tag files.
-	 */
-	data.gtop[GTAGS] = gtags_open(dbpath, root, GTAGS, GTAGS_MODIFY, 0);
-	if (test("f", makepath(dbpath, dbname(GRTAGS), NULL))) {
-		data.gtop[GRTAGS] = gtags_open(dbpath, root, GRTAGS, GTAGS_MODIFY, 0);
-	} else {
-		/*
-		 * If you set NULL to data.gtop[GRTAGS], parse_file() doesn't write to
-		 * GRTAGS. See put_syms().
-		 */
-		data.gtop[GRTAGS] = NULL;
-	}
-	/*
-	 * Delete tags from GTAGS.
-	 */
-    seqno = 1;
+    LOGD("Updating '%s' and '%s'.\n", dbname(GTAGS), dbname(GRTAGS));
+	
+	// Delete tags from project
 	if (!idset_empty(deleteset)) {
-		if (vflag) {
-			char fid[MAXFIDLEN];
-			int total = idset_count(deleteset);
-			unsigned int id;
-
-			for (id = idset_first(deleteset); id != END_OF_ID; id = idset_next(deleteset)) {
-				snprintf(fid, sizeof(fid), "%d", id);
-				path = gpath_fid2path(fid, NULL);
-				if (path == NULL)
-					die("GPATH is corrupted.");
-				fprintf(stderr, " [%d/%d] deleting tags of %s\n", seqno++, total, path + 2);
-			}
-		}
-		gtags_delete(data.gtop[GTAGS], deleteset);
-		if (data.gtop[GRTAGS] != NULL)
-			gtags_delete(data.gtop[GRTAGS], deleteset);
+        int res = project_del(GlobalProject, deleteset);
+        if (0 != res)
+            LOGE("Cannot delete deleteset: %p", deleteset);
 	}
-    LOGI("delete tag with seq number: %d", seqno);
-	/*
-	 * Set flags.
-	 */
-	data.gtop[GTAGS]->flags = 0;
-	// if (extractmethod)
-    if (getconfb("extractmethod"))
-		data.gtop[GTAGS]->flags |= GTAGS_EXTRACTMETHOD;
-	data.gtop[GRTAGS]->flags = data.gtop[GTAGS]->flags;
-	flags = 0;
-	if (vflag)
-		flags |= PARSER_VERBOSE;
-	if (debug)
-		flags |= PARSER_DEBUG;
-	if (wflag)
-		flags |= PARSER_WARNING;
-	/*
-	 * Add tags to GTAGS and GRTAGS.
-	 */
+	
+	// Add tags to GTAGS and GRTAGS.
 	start = strbuf_value(addlist);
 	end = start + strbuf_getlen(addlist);
-	seqno = 0;
+
+	int seqno = 0;
 	for (path = start; path < end; path += strlen(path) + 1) {
 		gpath_put(path, GPATH_SOURCE);
-		data.fid = gpath_path2fid(path, NULL);
-		if (data.fid == NULL)
-			die("GPATH is corrupted.('%s' not found)", path);
-		if (vflag)
-			fprintf(stderr, " [%d/%d] extracting tags of %s", ++seqno, total, path + 2);
-		parse_file(path, flags, put_syms, &data);
-		gtags_flush(data.gtop[GTAGS], data.fid);
-		if (data.gtop[GRTAGS] != NULL)
-			gtags_flush(data.gtop[GRTAGS], data.fid);
+        const char *fid = gpath_path2fid(path, NULL);
+        assert(NULL != fid);
+
+        LOGD("[%d/%d] extracting tags of %s", ++seqno, total, path + 2);
+
+        int res = project_add(GlobalProject, path, fid);
+        if (0 != res)
+            LOGE("Cannot add file into project: %s %s", path, fid);
 	}
-    LOGI("add tag with seq number: %d", seqno);
-	gtags_close(data.gtop[GTAGS]);
-	if (data.gtop[GRTAGS] != NULL)
-		gtags_close(data.gtop[GRTAGS]);
 }
 
 /*
@@ -524,24 +456,14 @@ updatetags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addli
 void createTags(const char *dbpath, const char *root)
 {
 	STATISTICS_TIME *tim;
-	struct put_func_data data;
 	const char *path;
     char realPath[MAXPATHLEN + 1];
     char normalPath[MAXPATHLEN + 1];
     char rootSlash[MAXPATHLEN + 1];
 
     sprintf(rootSlash, "%s/", root);
-
-    GlobalProject = project_open(0, root, dbpath);
-    if (NULL == GlobalProject) {
-        LOGE("Cannot open project");
-        return;
-    }
-    GlobalProject->parser = GlobalParser;
-
-	/*
-	 * Add tags to GTAGS and GRTAGS.
-	 */
+	
+	// Add tags to GTAGS and GRTAGS.
 	if (file_list)
 		find_open_filelist(file_list, root);
     else
@@ -549,13 +471,21 @@ void createTags(const char *dbpath, const char *root)
 
 	int seqno = 0;
 	while ((path = find_read()) != NULL) {
+#if 0
 		if (*path == ' ') {
 			path++;
 			if (!test("b", path))
 				gpath_put(path, GPATH_OTHER);
 			continue;
 		}
-#if 1
+#endif
+        WPATH_SOURCE_TYPE_T type = wpath_getSourceType(path);
+        if (WPATH_SOURCE_TYPE_SOURCE != type) {
+            LOGD("Ignore source type %d: %s", type, path);
+            continue;
+        }
+
+#if 0
         // check whether path exist
         char *res = realpath(path, realPath);
         if (NULL == res) {
@@ -573,17 +503,22 @@ void createTags(const char *dbpath, const char *root)
             continue;
         }
         path = normalPath;
-#endif
+
 		gpath_put(path, GPATH_SOURCE);
+#else
+        const char *fid = wpath_put(GlobalPath, path);
+        if (NULL == fid) {
+            LOGE("Cannot put path into project: %s", path);
+            continue;
+        }
+#endif
         LOGD(" [%d] extracting tags of %s", ++seqno, path + 2);
 
-        project_add(GlobalProject, path, gpath_path2fid(path, NULL));
+        project_add(GlobalProject, path, fid);
 	}
 	
     // clean up
 	find_close();
-
-    project_close(&GlobalProject);
 }
 
 /*

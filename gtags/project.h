@@ -22,6 +22,8 @@
 #include "strbuf.h"
 #include "wparser.h"
 #include "gtagsop.h"
+#include "idset.h"
+#include "wpath.h"
 
 typedef enum
 {
@@ -34,26 +36,30 @@ struct put_func_data {
 	const char *fid;
 };
 
-typedef int (*file_project)(STRBUF *file);
+typedef int (*add_project)(void *thiz, const char *file, const char *fid);
+typedef int (*del_project)(void *thiz, IDSET *deleteFileIDSet);
 typedef int (*sel_project)(SEL_TYPE_T query, void *res);
 
 // a project can treate as a folder which contains GTAGS/GPATH/...
 typedef struct ProjectContext
 {
-    file_project add; // add a file in to project
-    file_project del; // delete a file from project
+    add_project add; // add a file in to project
+    del_project del; // delete a file from project
     sel_project sel; // query result from project
-    file_project upd; // update a file from project
+    add_project upd; // update a file from project
 
     PParser parser; // set before use project_add and so on
 } *PProjectContext;
 
-PProjectContext project_open(int type, const char *root, const char *db);
+PProjectContext project_open(int type, const char *root,
+        const char *db, WPATH_MODE_T mode);
 
 void project_close(PProjectContext *pcontext);
 
 // add a file into a project
 int project_add(PProjectContext pcontext, const char *file, const char *fid);
+
+int project_del(PProjectContext pcontext, IDSET *deleteFileIDSet);
 
 #endif
 
