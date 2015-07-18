@@ -41,9 +41,7 @@ PWPath wpath_open(const char *db, const char *root, WPATH_MODE_T mode);
 
 void wpath_close(PWPath *ppwpath);
 
-#if 0
-int wpath_GetID(PWPath pwpath, const char *src, STRBUF *out);
-#endif
+int wpath_getIntID(PWPath pwpath, const char *src);
 
 // put source file into path
 // return fid for successful, return NULL for failed
@@ -57,6 +55,12 @@ const char *wpath_getID(PWPath pwpath, const char *src);
 
 // get file id from source
 int wpath_deleteByID(PWPath pwpath, int id);
+
+// get the next id of wpath
+int wpath_nextID(PWPath pwpath);
+
+// is src contained in path
+int wpath_isExist(PWPath pwpath, const char *src);
 
 #if 0
 int wpath_exist(PWPath pwpath, const char *src);

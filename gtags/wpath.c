@@ -93,22 +93,6 @@ void wpath_close(PWPath *ppwpath)
     *ppwpath = NULL;
 }
 
-#if 0
-int wpath_GetID(PWPath pwpath, const char *src, STRBUF *out)
-{
-    if (NULL == pwpath || NULL == src || NULL == out)
-        return -1;
-
-    const char *fid = gpath_path2fid(src, NULL);
-    if (NULL == fid)
-        return -1;
-
-    strbuf_reset(out);
-    strbuf_puts(out, src);
-    return 0;
-}
-#endif
-
 const char *wpath_getID(PWPath pwpath, const char *src)
 {
     if (NULL == pwpath || NULL == src) {
@@ -117,6 +101,30 @@ const char *wpath_getID(PWPath pwpath, const char *src)
     }
 
     return gpath_path2fid(src, NULL);
+}
+
+int wpath_getIntID(PWPath pwpath, const char *src)
+{
+    const char *id = wpath_getID(pwpath, src);
+    if (NULL == id)
+        return -1;
+
+    return atoi(id);
+}
+
+int wpath_nextID(PWPath pwpath)
+{
+    if (NULL == pwpath) {
+        LOGE("Invalid parameter");
+        return -1;
+    }
+
+    return gpath_nextkey();
+}
+
+int wpath_isExist(PWPath pwpath, const char *src)
+{
+    return NULL != wpath_getID(pwpath, src);
 }
 
 const char *wpath_put(PWPath pwpath, const char *src)
@@ -140,11 +148,7 @@ const char *wpath_put(PWPath pwpath, const char *src)
     }
 
     gpath_put(pwpath->normalPath, GPATH_SOURCE);
-#if 1
     return gpath_path2fid(pwpath->normalPath, NULL);
-#else
-    return 0;
-#endif
 }
 
 int wpath_isModified(PWPath pwpath, const char *src)
@@ -189,48 +193,6 @@ int wpath_deleteByID(PWPath pwpath, int id)
     strbuf_close(pathBuf);
     return 0;
 }
-
-#if 0
-const char *wpath_getID(PWPath pwpath, const char *src)
-{
-    if (NULL = pwpath || NULL == src) {
-        LOGE("Invalid parameter");
-        return -1;
-    }
-
-    return gpath_path2fid(pwpath->normalPath, NULL);
-}
-#endif
-
-#if 0
-int wpath_exist(PWPath pwpath, const char *src)
-{
-    if (NULL == pwpath || NULL == src) {
-        LOGE("Invalid parameter");
-        return 0;
-    }
-
-    // check whether path exist to follow symbol link
-    char *res = realpath(src, pwpath->realPath);
-    if (NULL == res) {
-        LOGE("read link failed %s to %s", src, pwpath->realPath);
-        return 0;
-    }
-    res = normalize(pwpath->realPath, pwpath->rootSlash,
-            pwpath->db, pwpath->normalPath, MAXPATHLEN);
-    if (NULL == res) {
-        LOGE("normailize path failed %s to %s", src, pwpath->realPath);
-        return 0;
-    }
-    // always use real path instead
-    if (NULL != gpath_path2fid(pwpath->normalPath, NULL)) {
-        LOGE("duplicated symbol link detected: %s %s", src, pwpath->normalPath);
-        return 1;
-    }
-
-    return 0;
-}
-#endif
 
 WPATH_SOURCE_TYPE_T wpath_getSourceType(const char *src)
 {

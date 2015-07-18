@@ -34,8 +34,8 @@ static void project_parser_cb(int type, const char *tag,
         int lno, const char *path, const char *line_image, void *arg);
 
 // simple project operation functions
-int project_simple_add(void *thiz, const char *file, const char *fid);
-int project_simple_del_all(void *thiz, IDSET *delset);
+int project_simple_add(void *thiz, const char *file);
+int project_simple_del_set(void *thiz, IDSET *delset);
 
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
@@ -62,7 +62,7 @@ PProjectContext project_open(int type, const char *root,
 
     // fill operation
     pcontext->super.add = project_simple_add;
-    pcontext->super.del = project_simple_del_all;
+    pcontext->super.delset = project_simple_del_set;
 
     return (PProjectContext)pcontext;
 }
@@ -84,25 +84,79 @@ void project_close(PProjectContext *ppcontext)
     *ppcontext = NULL;
 }
 
-int project_add(PProjectContext pcontext, const char *file, const char *fid)
+int project_add(PProjectContext pcontext, const char *file)
 {
-    if (NULL == pcontext || NULL == pcontext->add) {
+    if (NULL == pcontext || NULL == pcontext->add || NULL == file) {
         LOGE("Invalid argument");
         return -1;
     }
 
-    return pcontext->add(pcontext, file, fid);
+    return pcontext->add(pcontext, file);
 }
 
-int project_del_all(PProjectContext pcontext, IDSET *deleteFileIDSet)
+int project_del(PProjectContext pcontext, const char *src)
 {
-    if (NULL == pcontext || NULL == pcontext->del || NULL == deleteFileIDSet ||
-            NULL == pcontext->path) {
+    if (NULL == pcontext || NULL == src || NULL == pcontext->path) {
         LOGE("Invalid parameter");
         return -1;
     }
 
-    return pcontext->del(pcontext, deleteFileIDSet);
+    if (NULL != pcontext->del) {
+        return pcontext->del(pcontext, src);
+    } else {
+        // make delete set
+        IDSET *delset = idset_open(wpath_nextID(pcontext->path));
+        int id = wpath_getIntID(pcontext->path, src);
+        if (id < 1) {
+            LOGE("Cannot get id by src: %s", src);
+            return -1;
+        }
+        idset_add(delset, id);
+
+        int res = project_del_set(pcontext, delset);
+        if (0 != res)
+            LOGE("Cannot delete file set %d: %d", id, res);
+
+        idset_close(delset);
+
+        return res;
+    }
+}
+
+int project_del_set(PProjectContext pcontext, IDSET *deleteFileIDSet)
+{
+    if (NULL == pcontext || NULL == pcontext->path
+            || NULL == pcontext->delset || NULL == deleteFileIDSet ) {
+        LOGE("Invalid parameter");
+        return -1;
+    }
+
+    return pcontext->delset(pcontext, deleteFileIDSet);
+}
+
+int project_update(PProjectContext pcontext, const char *src)
+{
+    if (NULL == pcontext || NULL == src || NULL == pcontext->path) {
+        LOGE("Invalid argument");
+        return -1;
+    }
+
+    if (NULL != pcontext->upd) {
+        return pcontext->upd(pcontext, src);
+    } else {
+        // default implementation
+        if (wpath_isExist(pcontext->path, src)) {
+            // delete file from project if exist
+            int res = project_del(pcontext, src);
+            if (0 != res) {
+                LOGE("Cannot delete file %s: %d", src, res);
+                return -1;
+            }
+        }
+
+        // add source file
+        return project_add(pcontext, src);
+    }
 }
 
 static void project_parser_cb(int type, const char *tag,
@@ -130,15 +184,21 @@ static void project_parser_cb(int type, const char *tag,
 	gtags_put_using(gtop, tag, lno, pdata->fid, line_image);
 }
 
-int project_simple_add(void *thiz, const char *file, const char *fid)
+int project_simple_add(void *thiz, const char *file)
 {
     ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
 
-    if (NULL == pdcontext->super.parser || NULL == file || NULL == fid) {
+    if (NULL == pdcontext->super.parser || NULL == pdcontext->super.path ||
+            NULL == file) {
         LOGE("Invalid argument");
         return -1;
     }
 
+    const char *fid = wpath_put(pdcontext->super.path, file);
+    if (NULL == fid) {
+        LOGE("Cannot put path into project: %s", file);
+        return -1;
+    }
     pdcontext->data.fid = fid;
     int res = wparser_parse(pdcontext->super.parser,
             file, project_parser_cb, pdcontext);
@@ -148,7 +208,7 @@ int project_simple_add(void *thiz, const char *file, const char *fid)
     return res;
 }
 
-int project_simple_del_all(void *thiz, IDSET *delset)
+int project_simple_del_set(void *thiz, IDSET *delset)
 {
     ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
 

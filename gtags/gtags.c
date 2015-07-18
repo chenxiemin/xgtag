@@ -28,27 +28,6 @@
 #include <utime.h>
 #include <signal.h>
 #include <stdio.h>
-#if TIME_WITH_SYS_TIME
-#include <sys/time.h>
-#include <time.h>
-#else
-#if HAVE_SYS_TIME_H
-#include <sys/time.h>
-#else
-#include <time.h>
-#endif
-#endif
-#ifdef STDC_HEADERS
-#include <stdlib.h>
-#endif
-#ifdef HAVE_STRING_H
-#include <string.h>
-#else
-#include <strings.h>
-#endif
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 #include <sys/stat.h>
 #include <errno.h>
 #include <assert.h>
@@ -70,7 +49,6 @@ PWPath GlobalPath = NULL;
 
 int main(int, char **);
 static void readOptions(int argc, char **argv);
-static void initParser();
 static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
@@ -194,10 +172,21 @@ int main(int argc, char **argv)
     GlobalProject->path = GlobalPath;
 
     // make tag processing
-	if (iflag)
-		incremental(dbpath, cwd); // single update a file
-    else
+    if (iflag) {
+        LOGD("Incremental updating for tag: %s", dbpath);
+        if (single_update) {
+            // get source type
+            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(single_update);
+            if (WPATH_SOURCE_TYPE_SOURCE == type)
+                project_update(GlobalProject, single_update);
+            else
+                LOGD("Ignore source type %d: %s", type, single_update);
+        } else {
+            incremental(dbpath, cwd); // single update a file
+        }
+    } else {
         createTags(dbpath, cwd); // create GTAGS and GRTAGS
+    }
 	
     LOGD("[%s] Done.\n", now());
 
@@ -222,238 +211,80 @@ int main(int argc, char **argv)
  */
 int incremental(const char *dbpath, const char *root)
 {
-	STATISTICS_TIME *tim;
-	STRBUF *addlist = strbuf_open(0);
-	STRBUF *deletelist = strbuf_open(0);
-	STRBUF *addlist_other = strbuf_open(0);
-	IDSET *deleteset, *findset;
-	int updated = 0;
-	const char *path;
-	unsigned int id, limit;
+    STRBUF *addlist = strbuf_open(0);
+    const char *path;
+    unsigned int id, limit;
 
-#if 0
-	// Version check. If existing tag files are old enough
-	// gtagsopen() abort with error message.
-	GTOP *gtop = gtags_open(dbpath, cwd, GTAGS, GTAGS_MODIFY, 0);
-	gtags_close(gtop);
-	
-	// GPATH is needed for incremental updating.
-	// Gtags check whether or not GPATH exist, since it may be
-	// removed by mistake.
-	if (!test("f", makepath(dbpath, dbname(GPATH), NULL)))
-		die("Old version tag file found. Please remake it.");
-#endif
+    // The list of the path name which should be deleted from GPATH.
+    IDSET *deleteset = idset_open(gpath_nextkey());
+    // The list of the path name which exists in the current project.
+    // A project is limited by the --file option.
+    IDSET *findset = idset_open(gpath_nextkey());
+    total = 0;
 
-    LOGD("Incremental updating for tag: %s", dbpath);
+    // Make add list and delete list for update.
+    if (file_list)
+        find_open_filelist(file_list, root);
+    else
+        find_open(NULL);
+    while ((path = find_read()) != NULL) {
+        // get file type
+        WPATH_SOURCE_TYPE_T type = wpath_getSourceType(path);
+        if (WPATH_SOURCE_TYPE_SOURCE != type) {
+            LOGD("Ingnore source type %d: %s", type, path);
+            continue;
+        }
 
-    // get modified time of GTAGS.
-	struct stat statp;
-	path = makepath(dbpath, dbname(GTAGS), NULL);
-	if (stat(path, &statp) < 0)
-		die("stat failed '%s'.", path);
-    time_t gtags_mtime = statp.st_mtime;
+        // check file exist
+        const char *fid = wpath_getID(GlobalPath, path);
+        if (NULL != fid) {
+            // add to findset
+            idset_add(findset, atoi(fid));
 
-#if 0
-	if (gpath_open(dbpath, 2) < 0)
-		die("GPATH not found.");
-#endif
-
-	
-	// deleteset:
-	//  The list of the path name which should be deleted from GPATH.
-	// findset:
-	//  The list of the path name which exists in the current project.
-	//  A project is limited by the --file option.
-	deleteset = idset_open(gpath_nextkey());
-	findset = idset_open(gpath_nextkey());
-	total = 0;
-
-	// Make add list and delete list for update.
-	if (single_update) {
-        WPATH_SOURCE_TYPE_T type = wpath_getSourceType(single_update);
-        if (type != WPATH_SOURCE_TYPE_SOURCE)
-            goto exit;
-
-        strbuf_puts0(addlist, single_update);
-		const char *fid = gpath_path2fid(single_update, NULL);
-        if (NULL != fid);
-			idset_add(deleteset, atoi(fid));
-	} else {
-		if (file_list)
-			find_open_filelist(file_list, root);
-		else
-			find_open(NULL);
-		while ((path = find_read()) != NULL) {
-#if 0
-			const char *fid;
-			int n_fid = 0;
-			int other = 0;
-
-			if (*path == ' ') {
-				if (test("b", ++path))
-					continue;
-				other = 1;
-			}
-			if (stat(path, &statp) < 0)
-				die("stat failed '%s'.", path);
-			fid = gpath_path2fid(path, NULL);
-			if (fid) { 
-				n_fid = atoi(fid);
-				idset_add(findset, n_fid);
-			}
-			if (other) {
-				if (fid == NULL)
-					strbuf_puts0(addlist_other, path);
-			} else {
-				if (fid == NULL) {
-					strbuf_puts0(addlist, path);
-					total++;
-				} else if (gtags_mtime < statp.st_mtime) {
-					strbuf_puts0(addlist, path);
-					total++;
-					idset_add(deleteset, n_fid);
-				}
-			}
-#else
-            // get file type
-            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(path);
-            if (WPATH_SOURCE_TYPE_SOURCE != type) {
-                LOGD("Ingnore source type %d: %s", type, path);
-                continue;
+            // already exist, check modified
+            if (wpath_isModified(GlobalPath, path)) {
+                // put file to delete list if already exist
+                idset_add(deleteset, atoi(fid));
+            } else {
+                LOGD("Unchanged file since last scanning: %s", path);
+                continue; // skip file pending to add list
             }
+        }
 
-            // check file exist
-            const char *fid = wpath_getID(GlobalPath, path);
-            if (NULL != fid) {
-                // add to findset
-                idset_add(findset, atoi(fid));
+        // if file not exist or modified, put to add list
+        total++;
+        strbuf_puts0(addlist, path);
+    }
+    find_close();
 
-                // already exist, check modified
-                if (wpath_isModified(GlobalPath, path)) {
-                    // put file to delete list if already exist
-                    idset_add(deleteset, atoi(fid));
-                } else {
-                    LOGD("Unchanged file since last scanning: %s", path);
-                    continue; // skip file pending to add list
-                }
-            }
+    // make delete list.
+    limit = gpath_nextkey();
+    for (id = 1; id < limit; id++) {
+        char fid[MAXFIDLEN];
+        int type;
 
-            // if file not exist or modified, put to add list
-            total++;
-            strbuf_puts0(addlist, path);
-#endif
-		}
-		find_close();
-		
-#if 1
-		// make delete list.
-		limit = gpath_nextkey();
-		for (id = 1; id < limit; id++) {
-			char fid[MAXFIDLEN];
-			int type;
+        snprintf(fid, sizeof(fid), "%d", id);
 
-			snprintf(fid, sizeof(fid), "%d", id);
-			/*
-			 * This is a hole of GPATH. The hole increases if the deletion
-			 * and the addition are repeated.
-			 */
-			if ((path = gpath_fid2path(fid, &type)) == NULL)
-				continue;
-			/*
-			 * The file which does not exist in the findset is treated
-			 * assuming that it does not exist in the file system.
-			 */
-#if 0
-			if (type == GPATH_OTHER) {
-				if (!idset_contains(findset, id) || !test("f", path) || test("b", path))
-					strbuf_puts0(deletelist, path);
-			} else {
-				if (!idset_contains(findset, id) || !test("f", path)) {
-					strbuf_puts0(deletelist, path);
-					idset_add(deleteset, id);
-				}
-			}
-#else
-            if (!idset_contains(findset, id) || !test("f", path))
-                idset_add(deleteset, id);
-#endif
-		}
-#endif
-	}
+        // This is a hole of GPATH. The hole increases if the deletion
+        // and the addition are repeated.
+        if ((path = gpath_fid2path(fid, &type)) == NULL)
+            continue;
+
+        // The file which does not exist in the findset is treated
+        // assuming that it does not exist in the file system.
+        if (!idset_contains(findset, id) || !test("f", path))
+            idset_add(deleteset, id);
+    }
 
     // update tag
     if (!idset_empty(deleteset) || strbuf_getlen(addlist) > 0)
         updateTags(dbpath, root, deleteset, addlist);
 
-#if 0
-	/*
-	 * execute updating.
-	 */
-	if ((!idset_empty(deleteset) || strbuf_getlen(addlist) > 0) ||
-	    (strbuf_getlen(deletelist) + strbuf_getlen(addlist_other) > 0))
-	{
-		int db;
-		updated = 1;
-		if (strbuf_getlen(deletelist) + strbuf_getlen(addlist_other) > 0) {
-			const char *start, *end, *p;
+    strbuf_close(addlist);
+    idset_close(deleteset);
+    idset_close(findset);
 
-			if (vflag)
-				fprintf(stderr, "[%s] Updating '%s'.\n", now(), dbname(GPATH));
-			/* gpath_open(dbpath, 2); */
-			if (strbuf_getlen(deletelist) > 0) {
-				start = strbuf_value(deletelist);
-				end = start + strbuf_getlen(deletelist);
-
-				for (p = start; p < end; p += strlen(p) + 1)
-					gpath_delete(p);
-			}
-
-#if 0
-			if (strbuf_getlen(addlist_other) > 0) {
-				start = strbuf_value(addlist_other);
-				end = start + strbuf_getlen(addlist_other);
-
-				for (p = start; p < end; p += strlen(p) + 1) {
-					gpath_put(p, GPATH_OTHER);
-				}
-			}
-#endif
-			/* gpath_close(); */
-		}
-
-#if 0
-		/*
-		 * Update modification time of tag files
-		 * because they may have no definitions.
-		 */
-		for (db = GTAGS; db < GTAGLIM; db++)
-			utime(makepath(dbpath, dbname(db), NULL), NULL);
-		statistics_time_end(tim);
-#endif
-	}
-#endif
-
-exit:
-#if 0
-	if (vflag) {
-		if (updated)
-			fprintf(stderr, " Global databases have been modified.\n");
-		else
-			fprintf(stderr, " Global databases are up to date.\n");
-		fprintf(stderr, "[%s] Done.\n", now());
-	}
-#endif
-	strbuf_close(addlist);
-	strbuf_close(deletelist);
-	strbuf_close(addlist_other);
-#if 0
-	gpath_close();
-#endif
-
-	idset_close(deleteset);
-	idset_close(findset);
-
-	return updated;
+    return 1;
 }
 
 /*
@@ -472,7 +303,7 @@ void updateTags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *
 	
 	// Delete tags from project
 	if (!idset_empty(deleteset)) {
-        int res = project_del_all(GlobalProject, deleteset);
+        int res = project_del_set(GlobalProject, deleteset);
         if (0 != res)
             LOGE("Cannot delete deleteset: %p", deleteset);
 	}
@@ -483,15 +314,11 @@ void updateTags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *
 
 	int seqno = 0;
 	for (path = start; path < end; path += strlen(path) + 1) {
-		gpath_put(path, GPATH_SOURCE);
-        const char *fid = gpath_path2fid(path, NULL);
-        assert(NULL != fid);
-
         LOGD("[%d/%d] extracting tags of %s", ++seqno, total, path + 2);
 
-        int res = project_add(GlobalProject, path, fid);
+        int res = project_add(GlobalProject, path);
         if (0 != res)
-            LOGE("Cannot add file into project: %s %s", path, fid);
+            LOGE("Cannot add file into project: %s", path);
 	}
 }
 
@@ -519,50 +346,15 @@ void createTags(const char *dbpath, const char *root)
 
 	int seqno = 0;
 	while ((path = find_read()) != NULL) {
-#if 0
-		if (*path == ' ') {
-			path++;
-			if (!test("b", path))
-				gpath_put(path, GPATH_OTHER);
-			continue;
-		}
-#endif
         WPATH_SOURCE_TYPE_T type = wpath_getSourceType(path);
         if (WPATH_SOURCE_TYPE_SOURCE != type) {
             LOGD("Ignore source type %d: %s", type, path);
             continue;
         }
 
-#if 0
-        // check whether path exist
-        char *res = realpath(path, realPath);
-        if (NULL == res) {
-            LOGE("read link failed %s to %s", path, realPath);
-            continue;
-        }
-        res = normalize(realPath, rootSlash, dbpath, normalPath, MAXPATHLEN);
-        if (NULL == res) {
-            LOGE("normailize path failed %s to %s", path, realPath);
-            continue;
-        }
-        // always use real path instead
-        if (NULL != gpath_path2fid(normalPath, NULL)) {
-            LOGE("duplicated symbol link deprecated: %s", path);
-            continue;
-        }
-        path = normalPath;
-
-		gpath_put(path, GPATH_SOURCE);
-#else
-        const char *fid = wpath_put(GlobalPath, path);
-        if (NULL == fid) {
-            LOGE("Cannot put path into project: %s", path);
-            continue;
-        }
-#endif
         LOGD(" [%d] extracting tags of %s", ++seqno, path + 2);
 
-        project_add(GlobalProject, path, fid);
+        project_add(GlobalProject, path);
 	}
 	
     // clean up
@@ -858,32 +650,6 @@ static void readOptions(int argc, char **argv)
 		die("directory '%s' not found.", dbpath);
 	if (vflag)
 		fprintf(stderr, "[%s] Gtags started.\n", now());
-}
-
-static void initParser()
-{
-    char *langmap = NULL;
-    char *gtags_parser = NULL;
-
-    // get lang map
-	STRBUF *sb = strbuf_open(0);
-	if (getconfs("langmap", sb))
-		langmap = check_strdup(strbuf_value(sb));
-	strbuf_reset(sb);
-    // get parser
-	if (getconfs("gtags_parser", sb))
-		gtags_parser = check_strdup(strbuf_value(sb));
-	if (vflag && gtags_parser)
-		fprintf(stderr, " Using plug-in parser.\n");
-    // init parser
-	parser_init(langmap, gtags_parser);
-
-    // free
-    if (NULL != langmap)
-        free(langmap);
-    if (NULL != gtags_parser)
-        free(gtags_parser);
-    strbuf_close(sb);
 }
 
 static void usage(void)
