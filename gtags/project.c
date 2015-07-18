@@ -35,7 +35,7 @@ static void project_parser_cb(int type, const char *tag,
 
 // simple project operation functions
 int project_simple_add(void *thiz, const char *file, const char *fid);
-int project_simple_del(void *thiz, IDSET *delset);
+int project_simple_del_all(void *thiz, IDSET *delset);
 
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
@@ -62,7 +62,7 @@ PProjectContext project_open(int type, const char *root,
 
     // fill operation
     pcontext->super.add = project_simple_add;
-    pcontext->super.del = project_simple_del;
+    pcontext->super.del = project_simple_del_all;
 
     return (PProjectContext)pcontext;
 }
@@ -94,9 +94,10 @@ int project_add(PProjectContext pcontext, const char *file, const char *fid)
     return pcontext->add(pcontext, file, fid);
 }
 
-int project_del(PProjectContext pcontext, IDSET *deleteFileIDSet)
+int project_del_all(PProjectContext pcontext, IDSET *deleteFileIDSet)
 {
-    if (NULL == pcontext || NULL == pcontext->del || NULL == deleteFileIDSet) {
+    if (NULL == pcontext || NULL == pcontext->del || NULL == deleteFileIDSet ||
+            NULL == pcontext->path) {
         LOGE("Invalid parameter");
         return -1;
     }
@@ -147,12 +148,22 @@ int project_simple_add(void *thiz, const char *file, const char *fid)
     return res;
 }
 
-int project_simple_del(void *thiz, IDSET *delset)
+int project_simple_del_all(void *thiz, IDSET *delset)
 {
     ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
 
+    // get GTAGS and GRTAGS associate with fid in delset
     gtags_delete(pdcontext->data.gtop[GTAGS], delset);
     gtags_delete(pdcontext->data.gtop[GRTAGS], delset);
+
+    // delete files in GPATH
+    int i = END_OF_ID;
+    for (i = idset_first(delset); i != END_OF_ID; i = idset_next(delset)) {
+        int res = wpath_deleteByID(pdcontext->super.path, i);
+        if (0 != res)
+            LOGE("Cannot delete file id: %d", i);
+    }
+    
     return 0;
 }
 

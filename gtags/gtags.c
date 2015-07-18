@@ -180,13 +180,18 @@ int main(int argc, char **argv)
     WPATH_MODE_T mode = WPATH_MODE_CREATE;
     if (iflag)
         mode = WPATH_MODE_MODIFY;
+    // init wpath
+    GlobalPath = wpath_open(dbpath, cwd, mode);
+    if (NULL == GlobalPath) {
+        LOGE("Cannot open wpath");
+        return -1;
+    }
     // init project
     GlobalProject = project_open(0, dbpath, cwd, mode);
     if (NULL == GlobalProject)
         die("Cannot open project: %s %s", dbpath, cwd);
     GlobalProject->parser = GlobalParser;
-    // init wpath
-    GlobalPath = wpath_open(dbpath, cwd, mode);
+    GlobalProject->path = GlobalPath;
 
     // make tag processing
 	if (iflag)
@@ -279,11 +284,11 @@ int incremental(const char *dbpath, const char *root)
 		else
 			find_open(NULL);
 		while ((path = find_read()) != NULL) {
+#if 0
 			const char *fid;
 			int n_fid = 0;
 			int other = 0;
 
-			/* a blank at the head of path means 'NOT SOURCE'. */
 			if (*path == ' ') {
 				if (test("b", ++path))
 					continue;
@@ -309,11 +314,39 @@ int incremental(const char *dbpath, const char *root)
 					idset_add(deleteset, n_fid);
 				}
 			}
+#else
+            // get file type
+            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(path);
+            if (WPATH_SOURCE_TYPE_SOURCE != type) {
+                LOGD("Ingnore source type %d: %s", type, path);
+                continue;
+            }
+
+            // check file exist
+            const char *fid = wpath_getID(GlobalPath, path);
+            if (NULL != fid) {
+                // add to findset
+                idset_add(findset, atoi(fid));
+
+                // already exist, check modified
+                if (wpath_isModified(GlobalPath, path)) {
+                    // put file to delete list if already exist
+                    idset_add(deleteset, atoi(fid));
+                } else {
+                    LOGD("Unchanged file since last scanning: %s", path);
+                    continue; // skip file pending to add list
+                }
+            }
+
+            // if file not exist or modified, put to add list
+            total++;
+            strbuf_puts0(addlist, path);
+#endif
 		}
 		find_close();
-		/*
-		 * make delete list.
-		 */
+		
+#if 1
+		// make delete list.
 		limit = gpath_nextkey();
 		for (id = 1; id < limit; id++) {
 			char fid[MAXFIDLEN];
@@ -330,6 +363,7 @@ int incremental(const char *dbpath, const char *root)
 			 * The file which does not exist in the findset is treated
 			 * assuming that it does not exist in the file system.
 			 */
+#if 0
 			if (type == GPATH_OTHER) {
 				if (!idset_contains(findset, id) || !test("f", path) || test("b", path))
 					strbuf_puts0(deletelist, path);
@@ -339,9 +373,19 @@ int incremental(const char *dbpath, const char *root)
 					idset_add(deleteset, id);
 				}
 			}
+#else
+            if (!idset_contains(findset, id) || !test("f", path))
+                idset_add(deleteset, id);
+#endif
 		}
+#endif
 	}
 
+    // update tag
+    if (!idset_empty(deleteset) || strbuf_getlen(addlist) > 0)
+        updateTags(dbpath, root, deleteset, addlist);
+
+#if 0
 	/*
 	 * execute updating.
 	 */
@@ -350,9 +394,6 @@ int incremental(const char *dbpath, const char *root)
 	{
 		int db;
 		updated = 1;
-		tim = statistics_time_start("Time of updating %s and %s.", dbname(GTAGS), dbname(GRTAGS));
-		if (!idset_empty(deleteset) || strbuf_getlen(addlist) > 0)
-			updateTags(dbpath, root, deleteset, addlist);
 		if (strbuf_getlen(deletelist) + strbuf_getlen(addlist_other) > 0) {
 			const char *start, *end, *p;
 
@@ -366,6 +407,8 @@ int incremental(const char *dbpath, const char *root)
 				for (p = start; p < end; p += strlen(p) + 1)
 					gpath_delete(p);
 			}
+
+#if 0
 			if (strbuf_getlen(addlist_other) > 0) {
 				start = strbuf_value(addlist_other);
 				end = start + strbuf_getlen(addlist_other);
@@ -374,8 +417,11 @@ int incremental(const char *dbpath, const char *root)
 					gpath_put(p, GPATH_OTHER);
 				}
 			}
+#endif
 			/* gpath_close(); */
 		}
+
+#if 0
 		/*
 		 * Update modification time of tag files
 		 * because they may have no definitions.
@@ -383,7 +429,9 @@ int incremental(const char *dbpath, const char *root)
 		for (db = GTAGS; db < GTAGLIM; db++)
 			utime(makepath(dbpath, dbname(db), NULL), NULL);
 		statistics_time_end(tim);
+#endif
 	}
+#endif
 
 exit:
 #if 0
@@ -424,7 +472,7 @@ void updateTags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *
 	
 	// Delete tags from project
 	if (!idset_empty(deleteset)) {
-        int res = project_del(GlobalProject, deleteset);
+        int res = project_del_all(GlobalProject, deleteset);
         if (0 != res)
             LOGE("Cannot delete deleteset: %p", deleteset);
 	}

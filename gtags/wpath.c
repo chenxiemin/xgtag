@@ -19,6 +19,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "wpath.h"
 #include "die.h"
@@ -27,11 +29,16 @@
 #include "strbuf.h"
 #include "gparam.h"
 #include "abs2rel.h"
+#include "gtagsop.h"
+#include "makepath.h"
+#include "strbuf.h"
 
 struct WPath
 {
     char db[MAXPATHLEN + 1];
     char root[MAXPATHLEN + 1];
+
+    time_t modifyTime;
 
     // for temporary use
     char realPath[MAXPATHLEN + 1];
@@ -50,11 +57,23 @@ PWPath wpath_open(const char *db, const char *root, WPATH_MODE_T mode)
         return NULL;
     }
 
+    // get modify time
+	const char *path = makepath(db, dbname(GTAGS), NULL);
+    if (NULL == path) {
+        LOGE("Cannot make db path");
+        return NULL;
+    }
+	struct stat statp;
+	if (stat(path, &statp) < 0)
+		die("stat failed '%s'.", path);
+
 	if (gpath_open(db, (int)mode) < 0)
 		die("GPATH not found.");
     
     PWPath pwpath = (PWPath)malloc(sizeof(struct WPath));
     memset(pwpath, 0, sizeof(struct WPath));
+
+    pwpath->modifyTime = statp.st_mtime;
 
     strcpy(pwpath->db, db);
     strcpy(pwpath->root, root);
@@ -74,6 +93,7 @@ void wpath_close(PWPath *ppwpath)
     *ppwpath = NULL;
 }
 
+#if 0
 int wpath_GetID(PWPath pwpath, const char *src, STRBUF *out)
 {
     if (NULL == pwpath || NULL == src || NULL == out)
@@ -86,6 +106,17 @@ int wpath_GetID(PWPath pwpath, const char *src, STRBUF *out)
     strbuf_reset(out);
     strbuf_puts(out, src);
     return 0;
+}
+#endif
+
+const char *wpath_getID(PWPath pwpath, const char *src)
+{
+    if (NULL == pwpath || NULL == src) {
+        LOGE("Invalid parameter");
+        return NULL;
+    }
+
+    return gpath_path2fid(src, NULL);
 }
 
 const char *wpath_put(PWPath pwpath, const char *src)
@@ -114,6 +145,49 @@ const char *wpath_put(PWPath pwpath, const char *src)
 #else
     return 0;
 #endif
+}
+
+int wpath_isModified(PWPath pwpath, const char *src)
+{
+    if (NULL == pwpath || NULL == src) {
+        LOGE("Invalid parameter");
+        return 0;
+    }
+
+    struct stat statp;
+    if (stat(src, &statp) < 0) {
+        LOGE("Cannot stat src file: %s", src);
+        return 0;
+    }
+
+    return pwpath->modifyTime < statp.st_mtime;
+}
+
+int wpath_deleteByID(PWPath pwpath, int id)
+{
+    if (NULL == pwpath || id < 1) {
+        LOGE("Invalid parameter");
+        return -1;
+    }
+
+    char fid[MAXFIDLEN];
+    snprintf(fid, sizeof(fid), "%d", id);
+
+    const char *path = gpath_fid2path(fid, NULL);
+    if (NULL == path) {
+        LOGE("Cannot find path by id: %s", fid);
+        return -1;
+    }
+    // copy path
+    STRBUF *pathBuf = strbuf_open(0);
+    strbuf_puts(pathBuf, path);
+
+    // delete
+    gpath_delete(strbuf_value(pathBuf));
+
+    // free buf
+    strbuf_close(pathBuf);
+    return 0;
 }
 
 #if 0
