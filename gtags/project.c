@@ -49,7 +49,7 @@ PProjectContext project_open(int type, const char *root,
     memset(pcontext, 0, sizeof(ProjectContextDefault));
     LOGD("open project at root %s db %s: %p", root, db, pcontext);
 
-	int openflags = GlobalOptions.cflag ? GTAGS_COMPACT : 0;
+	int openflags = O.c.cflag ? GTAGS_COMPACT : 0;
     // open  gtags
 	pcontext->data.gtop[GTAGS] = gtags_open(
             db, root, GTAGS, (int)mode, openflags);

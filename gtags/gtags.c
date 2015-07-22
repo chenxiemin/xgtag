@@ -42,35 +42,49 @@
 #include "wpath.h"
 #include "project.h"
 
-struct Options GlobalOptions = { 0 };
+struct Options O = { 0 };
 PParser GlobalParser = NULL;
 PProjectContext GlobalProject = NULL;
 PWPath GlobalPath = NULL;
 
 int main(int, char **);
+static void parseOptions(int argc, char **argv);
+static void dumpCommandDo();
 static void readOptions(int argc, char **argv);
 static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
 void updateTags(const char *, const char *, IDSET *, STRBUF *);
 void createTags(const char *, const char *);
-int printconf(const char *);
+int printConfig(const char *);
 
+#if 0
 int iflag;					/* incremental update */
+#endif
 int Oflag;					/* use objdir */
 int qflag;					/* quiet mode */
 int wflag;					/* warning message */
 int vflag;					/* verbose mode */
 int show_version;
 int show_help;
+#if 0
 int show_config;
+#endif
 char *gtagsconf;
 char *gtagslabel;
 int debug;
+#if 0
 const char *config_name;
+#endif
+#if 0
 const char *file_list;
+#endif
+#if 0
 const char *dump_target;
+#endif
+#if 0
 char *single_update;
+#endif
 int statistics = STATISTICS_STYLE_NONE;
 
 char dbpath[MAXPATHLEN];
@@ -143,7 +157,7 @@ int main(int argc, char **argv)
 	// Start statistics.
 	init_statistics();
     // read options
-    readOptions(argc, argv);
+    parseOptions(argc, argv);
     // load configuration file.
     openconf();
 
@@ -156,7 +170,7 @@ int main(int argc, char **argv)
     }
     // decide mode
     WPATH_MODE_T mode = WPATH_MODE_CREATE;
-    if (iflag)
+    if (O.c.iflag)
         mode = WPATH_MODE_MODIFY;
     // init wpath
     GlobalPath = wpath_open(dbpath, cwd, mode);
@@ -172,15 +186,15 @@ int main(int argc, char **argv)
     GlobalProject->path = GlobalPath;
 
     // make tag processing
-    if (iflag) {
+    if (O.c.iflag) {
         LOGD("Incremental updating for tag: %s", dbpath);
-        if (single_update) {
+        if (O.c.single_update) {
             // get source type
-            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(single_update);
+            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(O.c.single_update);
             if (WPATH_SOURCE_TYPE_SOURCE == type)
-                project_update(GlobalProject, single_update);
+                project_update(GlobalProject, O.c.single_update);
             else
-                LOGD("Ignore source type %d: %s", type, single_update);
+                LOGD("Ignore source type %d: %s", type, O.c.single_update);
         } else {
             incremental(dbpath, cwd); // single update a file
         }
@@ -223,8 +237,8 @@ int incremental(const char *dbpath, const char *root)
     total = 0;
 
     // Make add list and delete list for update.
-    if (file_list)
-        find_open_filelist(file_list, root);
+    if (O.c.file_list)
+        find_open_filelist(O.c.file_list, root);
     else
         find_open(NULL);
     while ((path = find_read()) != NULL) {
@@ -339,8 +353,8 @@ void createTags(const char *dbpath, const char *root)
     sprintf(rootSlash, "%s/", root);
 	
 	// Add tags to GTAGS and GRTAGS.
-	if (file_list)
-		find_open_filelist(file_list, root);
+	if (O.c.file_list)
+		find_open_filelist(O.c.file_list, root);
     else
 		find_open(NULL);
 
@@ -362,12 +376,12 @@ void createTags(const char *dbpath, const char *root)
 }
 
 /*
- * printconf: print configuration data.
+ * printConfig: print configuration data.
  *
  *	i)	name	label of config data
  *	r)		exit code
  */
-int printconf(const char *name)
+int printConfig(const char *name)
 {
 	int num;
 	int exist = 1;
@@ -387,6 +401,112 @@ int printconf(const char *name)
 	return exist;
 }
 
+typedef void (*cmd_parser)(int argc, char **argv);
+typedef void (*cmd_do)();
+
+typedef struct
+{
+    const char *cmdShort;
+    const char *cmdLong;
+    cmd_parser parser;
+    cmd_do docmd;
+} CommandParseList;
+
+static void dumpCommandParser(int argc, char **argv);
+
+static void parseOptions(int argc, char **argv)
+{
+    static CommandParseList CommandList[] = {
+        { "d", "dump", dumpCommandParser, dumpCommandDo }
+    };
+
+    if (argc > 1) {
+        int i = 0;
+        int cmdSize = (int)sizeof(CommandList) / (int)sizeof(CommandParseList);
+        for (i = 0; i < cmdSize; i++) {
+            if (0 == strcmp(CommandList[i].cmdShort, argv[1]) ||
+                    0 == strcmp(CommandList[i].cmdLong, argv[1])) {
+                // move args
+                argc--;
+                argv++;
+
+                // do parser and execute
+                optind = 1;
+                CommandList[i].parser(argc, argv);
+                CommandList[i].docmd();
+
+                exit(0);
+            }
+        }
+    }
+
+    readOptions(argc, argv);
+}
+
+static void dumpCommandParser(int argc, char **argv)
+{
+    if (argc < 2)
+        usage();
+
+	int option_index = 0;
+    char optchar = '0';
+	while ((optchar = getopt_long(argc, argv, "c",
+                    NULL, &option_index)) != EOF) {
+        switch (optchar) {
+            case 'c':
+			O.d.show_config = 1;
+			if (optarg)
+				O.d.config_name = optarg;
+            break;
+        }
+    }
+
+    if (1 != optind) {
+        argc -= optind;
+        argv += optind;
+    }
+    if (argc > 1)
+        O.d.dump_target = argv[1];
+}
+
+static void dumpCommandDo()
+{
+    if (NULL != O.d.dump_target) {
+        /*
+         * Dump a tag file.
+         */
+        DBOP *dbop = NULL;
+        const char *dat = 0;
+        int is_gpath = 0;
+
+        if (!test("f", O.d.dump_target))
+            die("file '%s' not found.", O.d.dump_target);
+        if ((dbop = dbop_open(O.d.dump_target,
+                        0, 0, DBOP_RAW)) == NULL)
+            die("file '%s' is not a tag file.", O.d.dump_target);
+        /*
+         * The file which has a NEXTKEY record is GPATH.
+         */
+        if (dbop_get(dbop, NEXTKEY))
+            is_gpath = 1;
+		for (dat = dbop_first(dbop, NULL, NULL, 0);
+                dat != NULL; dat = dbop_next(dbop)) {
+			const char *flag = is_gpath ? dbop_getflag(dbop) : "";
+
+			if (*flag)
+				printf("%s\t%s\t%s\n", dbop->lastkey, dat, flag);
+			else
+				printf("%s\t%s\n", dbop->lastkey, dat);
+		}
+		dbop_close(dbop);
+    } else if (O.d.show_config) {
+		if (O.d.config_name)
+			printConfig(O.d.config_name);
+		else
+			printf("%s\n", getconfline());
+    }
+}
+
 static void readOptions(int argc, char **argv)
 {
 	int option_index = 0;
@@ -396,11 +516,13 @@ static void readOptions(int argc, char **argv)
 		case 0:
 			/* already flags set */
 			break;
+#if 0
 		case OPT_CONFIG:
 			show_config = 1;
 			if (optarg)
 				config_name = optarg;
 			break;
+#endif
 		case OPT_GTAGSCONF:
 			gtagsconf = optarg;
 			break;
@@ -419,8 +541,8 @@ static void readOptions(int argc, char **argv)
 				die("Unknown path type.");
 			break;
 		case OPT_SINGLE_UPDATE:
-			iflag++;
-			single_update = optarg;
+			O.c.iflag++;
+			O.c.single_update = optarg;
 			break;
 		case OPT_ENCODE_PATH:
 			if (strlen(optarg) > 255)
@@ -433,16 +555,18 @@ static void readOptions(int argc, char **argv)
 			set_accept_dotfiles();
 			break;
 		case 'c':
-			GlobalOptions.cflag++;
+			O.c.cflag++;
 			break;
+#if 0
 		case 'd':
 			dump_target = optarg;
 			break;
+#endif
 		case 'f':
-			file_list = optarg;
+			O.c.file_list = optarg;
 			break;
 		case 'i':
-			iflag++;
+			O.c.iflag++;
 			break;
         /* // no use anymore
 		case 'I':
@@ -498,13 +622,16 @@ static void readOptions(int argc, char **argv)
 	/* If dbpath is specified, -O(--objdir) option is ignored. */
 	if (argc > 0)
 		Oflag = 0;
+#if 0
 	if (show_config) {
 		if (config_name)
-			printconf(config_name);
+			printConfig(config_name);
 		else
 			fprintf(stdout, "%s\n", getconfline());
 		exit(0);
-	} else if (do_path) {
+	} else 
+#endif
+        if (do_path) {
 		/*
 		 * This is the main body of path filter.
 		 * This code extract path name from tag line and
@@ -536,7 +663,9 @@ static void readOptions(int argc, char **argv)
 		convert_close(cv);
 		strbuf_close(ib);
 		exit(0);
-	} else if (dump_target) {
+	}
+#if 0
+    else if (dump_target) {
 		/*
 		 * Dump a tag file.
 		 */
@@ -564,6 +693,7 @@ static void readOptions(int argc, char **argv)
 		dbop_close(dbop);
 		exit(0);
 	}
+#endif
 #if 0
     else if (Iflag) {
 		if (!usable("mkid"))
@@ -575,15 +705,15 @@ static void readOptions(int argc, char **argv)
 	 * If 'gtags.files' exists, use it as a file list.
 	 * If the file_list other than "-" is given, it must be readable file.
 	 */
-	if (file_list == NULL && test("f", GTAGSFILES))
-		file_list = GTAGSFILES;
-	if (file_list && strcmp(file_list, "-")) {
-		if (test("d", file_list))
-			die("'%s' is a directory.", file_list);
-		else if (!test("f", file_list))
-			die("'%s' not found.", file_list);
-		else if (!test("r", file_list))
-			die("'%s' is not readable.", file_list);
+	if (O.c.file_list == NULL && test("f", GTAGSFILES))
+		O.c.file_list = GTAGSFILES;
+	if (O.c.file_list && strcmp(O.c.file_list, "-")) {
+		if (test("d", O.c.file_list))
+			die("'%s' is a directory.", O.c.file_list);
+		else if (!test("f", O.c.file_list))
+			die("'%s' not found.", O.c.file_list);
+		else if (!test("r", O.c.file_list))
+			die("'%s' is not readable.", O.c.file_list);
 	}
 	if (!getcwd(cwd, MAXPATHLEN))
 		die("cannot get current directory.");
@@ -591,9 +721,9 @@ static void readOptions(int argc, char **argv)
 	/*
 	 * Regularize the path name for single updating (--single-update).
 	 */
-	if (single_update) {
+	if (O.c.single_update) {
 		static char regular_path_name[MAXPATHLEN];
-		char *p = single_update;
+		char *p = O.c.single_update;
 		
 		if (!test("f", p))
 			die("'%s' not found.", p);
@@ -611,7 +741,7 @@ static void readOptions(int argc, char **argv)
 			else
 				snprintf(regular_path_name, MAXPATHLEN, "./%s", p);
 		}
-		single_update = regular_path_name;
+		O.c.single_update = regular_path_name;
 	}
 	/*
 	 * Decide directory (dbpath) in which gtags make tag files.
@@ -622,7 +752,7 @@ static void readOptions(int argc, char **argv)
 	 * at one of the candidate directories then gtags use existing
 	 * tag files.
 	 */
-	if (iflag) {
+	if (O.c.iflag) {
 		if (argc > 0)
 			realpath(*argv, dbpath);
 		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, vflag))
@@ -639,12 +769,12 @@ static void readOptions(int argc, char **argv)
 		} else
 			strlimcpy(dbpath, cwd, sizeof(dbpath));
 	}
-	if (iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
+	if (O.c.iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
 		!test("f", makepath(dbpath, dbname(GRTAGS), NULL)) ||
 		!test("f", makepath(dbpath, dbname(GPATH), NULL)))) {
 		if (wflag)
 			warning("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
-		iflag = 0;
+		O.c.iflag = 0;
 	}
 	if (!test("d", dbpath))
 		die("directory '%s' not found.", dbpath);

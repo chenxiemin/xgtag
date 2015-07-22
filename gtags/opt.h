@@ -21,10 +21,23 @@
 
 struct Options
 {
-    int cflag;					/* compact format */
+    union {
+        struct { // create tag options
+            int cflag;					/* compact format */
+
+            int iflag;					/* incremental update */
+            const char *file_list;
+            char *single_update;
+        } c;
+        struct { // dump options
+            const char *dump_target;
+            int show_config;
+            const char *config_name;
+        } d;
+    };
 };
 
-extern struct Options GlobalOptions;
+extern struct Options O;
 
 #endif
 
