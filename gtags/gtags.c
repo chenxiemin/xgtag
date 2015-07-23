@@ -59,36 +59,13 @@ void updateTags(const char *, const char *, IDSET *, STRBUF *, int);
 void createTags(const char *, const char *);
 int printConfig(const char *);
 
-#if 0
-int Oflag;					/* use objdir */
-#endif
 
 int statistics = STATISTICS_STYLE_NONE;
-#if 0
-int qflag;					/* quiet mode */
-#endif
-#if 0
-int wflag;					/* warning message */
-#endif
-#if 0
-int vflag;					/* verbose mode */
-#endif
 
 char dbpath[MAXPATHLEN];
 char cwd[MAXPATHLEN];
 
 #define GTAGSFILES "gtags.files"
-
-/*
- * Path filter
- */
-#if 0
-int do_path;
-int convert_type = PATH_RELATIVE;
-#endif
-
-// int extractmethod;
-// int total;
 
 static struct option const long_options[] = {
 	/*
@@ -450,9 +427,6 @@ static void parseGlobalOptions(int argc, char **argv)
         switch ((unsigned char)optchar) {
         case 'v':
         case GLOBAL_OPTION_VERSION:
-#if 0
-            version(NULL, vflag);
-#endif
             version(NULL, 1);
             break;
         case 'h':
@@ -544,19 +518,6 @@ static void readOptions(int argc, char **argv)
 		case OPT_GTAGSLABEL:
 			O.c.gtagslabel = optarg;
 			break;
-#if 0
-		case OPT_PATH:
-			do_path = 1;
-			if (!strcmp("absolute", optarg))
-				convert_type = PATH_ABSOLUTE;
-			else if (!strcmp("relative", optarg))
-				convert_type = PATH_RELATIVE;
-			else if (!strcmp("through", optarg))
-				convert_type = PATH_THROUGH;
-			else
-				die("Unknown path type.");
-			break;
-#endif
 		case OPT_SINGLE_UPDATE:
 			O.c.iflag++;
 			O.c.single_update = optarg;
@@ -595,20 +556,9 @@ static void readOptions(int argc, char **argv)
 			O.c.Oflag++;
 			break;
 		case 'q':
-#if 0
-			qflag++;
-#endif
 			setquiet();
 			break;
-#if 0
-		case 'w':
-			wflag++;
-			break;
-#endif
 		case 'v':
-#if 0
-			vflag++;
-#endif
 			setverbose();
 			break;
 		default:
@@ -627,10 +577,6 @@ static void readOptions(int argc, char **argv)
 	if (O.c.gtagslabel) {
 		set_env("GTAGSLABEL", O.c.gtagslabel);
 	}
-#if 0
-	if (qflag)
-		vflag = 0;
-#endif
 
 	argc -= optind;
     argv += optind;
@@ -638,41 +584,6 @@ static void readOptions(int argc, char **argv)
 	/* If dbpath is specified, -O(--objdir) option is ignored. */
 	if (argc > 0)
 		O.c.Oflag = 0;
-#if 0
-        if (do_path) {
-		/*
-		 * This is the main body of path filter.
-		 * This code extract path name from tag line and
-		 * replace it with the relative or the absolute path name.
-		 *
-		 * By default, if we are in src/ directory, the output
-		 * should be converted like follws:
-		 *
-		 * main      10 ./src/main.c  main(argc, argv)\n
-		 * main      22 ./libc/func.c   main(argc, argv)\n
-		 *		v
-		 * main      10 main.c  main(argc, argv)\n
-		 * main      22 ../libc/func.c   main(argc, argv)\n
-		 *
-		 * Similarly, the --path=absolute option specified, then
-		 *		v
-		 * main      10 /prj/xxx/src/main.c  main(argc, argv)\n
-		 * main      22 /prj/xxx/libc/func.c   main(argc, argv)\n
-		 */
-		STRBUF *ib = strbuf_open(MAXBUFLEN);
-		CONVERT *cv;
-		char *ctags_x;
-
-		if (argc < 3)
-			die("gtags --path: 3 arguments needed.");
-		cv = convert_open(convert_type, FORMAT_CTAGS_X, argv[0], argv[1], argv[2], stdout, NOTAGS);
-		while ((ctags_x = strbuf_fgets(ib, stdin, STRBUF_NOCRLF)) != NULL)
-			convert_put(cv, ctags_x);
-		convert_close(cv);
-		strbuf_close(ib);
-		exit(0);
-	}
-#endif
 
 	/*
 	 * If 'gtags.files' exists, use it as a file list.
@@ -728,18 +639,12 @@ static void readOptions(int argc, char **argv)
 	if (O.c.iflag) {
 		if (argc > 0)
 			realpath(*argv, dbpath);
-#if 0
-		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, vflag))
-#endif
 		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, 1))
 			strlimcpy(dbpath, cwd, sizeof(dbpath));
 	} else {
 		if (argc > 0)
 			realpath(*argv, dbpath);
 		else if (O.c.Oflag) {
-#if 0
-			char *objdir = getobjdir(cwd, vflag);
-#endif
 			char *objdir = getobjdir(cwd, 1);
 
 			if (objdir == NULL)
@@ -761,9 +666,6 @@ static void readOptions(int argc, char **argv)
 
 static void usage(void)
 {
-#if 0
-	if (!qflag)
-#endif
 		fputs(usage_const, stderr);
 	exit(2);
 }
