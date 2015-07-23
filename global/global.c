@@ -468,16 +468,16 @@ int main(int argc, char **argv)
 		case FROM_HERE:
 			{
 			char *p = optarg;
-			const char *usage = "usage: global --from-here=lineno:path.";
+#define USAGE "usage: global --from-here=lineno:path."
 
 			context_lineno = p;
 			while (*p && isdigit(*p))
 				p++;
 			if (*p != ':')
-				die_with_code(2, usage);
+				die_with_code(2, USAGE);
 			*p++ = '\0';
 			if (!*p)
-				die_with_code(2, usage);
+				die_with_code(2, USAGE);
 			context_file = p;
 			}
 			break;

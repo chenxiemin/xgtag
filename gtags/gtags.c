@@ -42,7 +42,6 @@
 #include "wpath.h"
 #include "project.h"
 
-struct Options O = { 0 };
 PParser GlobalParser = NULL;
 PProjectContext GlobalProject = NULL;
 PWPath GlobalPath = NULL;
@@ -666,7 +665,7 @@ static void readOptions(int argc, char **argv)
 
 static void usage(void)
 {
-		fputs(usage_const, stderr);
+    fputs(usage_const, stderr);
 	exit(2);
 }
 
