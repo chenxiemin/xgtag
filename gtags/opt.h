@@ -27,7 +27,9 @@ struct Options
 
             int iflag;					/* incremental update */
             const char *file_list;
-            char *single_update;
+            const char *single_update;
+            const char *gtagsconf;
+            const char *gtagslabel;
         } c;
         struct { // dump options
             const char *dump_target;

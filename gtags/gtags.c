@@ -49,6 +49,7 @@ PWPath GlobalPath = NULL;
 
 int main(int, char **);
 static void parseOptions(int argc, char **argv);
+static void parseGlobalOptions(int argc, char **argv);
 static void dumpCommandDo();
 static void readOptions(int argc, char **argv);
 static void usage(void);
@@ -58,34 +59,12 @@ void updateTags(const char *, const char *, IDSET *, STRBUF *);
 void createTags(const char *, const char *);
 int printConfig(const char *);
 
-#if 0
-int iflag;					/* incremental update */
-#endif
 int Oflag;					/* use objdir */
+
+int statistics = STATISTICS_STYLE_NONE;
 int qflag;					/* quiet mode */
 int wflag;					/* warning message */
 int vflag;					/* verbose mode */
-int show_version;
-int show_help;
-#if 0
-int show_config;
-#endif
-char *gtagsconf;
-char *gtagslabel;
-int debug;
-#if 0
-const char *config_name;
-#endif
-#if 0
-const char *file_list;
-#endif
-#if 0
-const char *dump_target;
-#endif
-#if 0
-char *single_update;
-#endif
-int statistics = STATISTICS_STYLE_NONE;
 
 char dbpath[MAXPATHLEN];
 char cwd[MAXPATHLEN];
@@ -133,10 +112,7 @@ static struct option const long_options[] = {
 #define OPT_ACCEPT_DOTFILES	134
 	/* flag value */
 	{"accept-dotfiles", no_argument, NULL, OPT_ACCEPT_DOTFILES},
-	{"debug", no_argument, &debug, 1},
 	{"statistics", no_argument, &statistics, STATISTICS_STYLE_TABLE},
-	{"version", no_argument, &show_version, 1},
-	{"help", no_argument, &show_help, 1},
 
 	/* accept value */
 	{"config", optional_argument, NULL, OPT_CONFIG},
@@ -420,6 +396,9 @@ static void parseOptions(int argc, char **argv)
         { "d", "dump", dumpCommandParser, dumpCommandDo }
     };
 
+    optind = 1;
+    parseGlobalOptions(argc, argv);
+
     if (argc > 1) {
         int i = 0;
         int cmdSize = (int)sizeof(CommandList) / (int)sizeof(CommandParseList);
@@ -441,6 +420,34 @@ static void parseOptions(int argc, char **argv)
     }
 
     readOptions(argc, argv);
+}
+
+static void parseGlobalOptions(int argc, char **argv)
+{
+#define GLOBAL_OPTION_VERSION 150
+#define GLOBAL_OPTION_HELP 151
+    static struct option global_long_options[] = {
+        { "version", no_argument, NULL, GLOBAL_OPTION_VERSION },
+        { "help", no_argument, NULL, GLOBAL_OPTION_HELP },
+    };
+
+    char optchar = 0;
+    int option_index = 0;
+	while ((optchar = getopt_long(argc, argv, "vh",
+                    global_long_options, &option_index)) != EOF) {
+        switch ((unsigned char)optchar) {
+        case 'v':
+        case GLOBAL_OPTION_VERSION:
+            version(NULL, vflag);
+            break;
+        case 'h':
+        case GLOBAL_OPTION_HELP:
+            help();
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static void dumpCommandParser(int argc, char **argv)
@@ -516,18 +523,11 @@ static void readOptions(int argc, char **argv)
 		case 0:
 			/* already flags set */
 			break;
-#if 0
-		case OPT_CONFIG:
-			show_config = 1;
-			if (optarg)
-				config_name = optarg;
-			break;
-#endif
 		case OPT_GTAGSCONF:
-			gtagsconf = optarg;
+			O.c.gtagsconf = optarg;
 			break;
 		case OPT_GTAGSLABEL:
-			gtagslabel = optarg;
+			O.c.gtagslabel = optarg;
 			break;
 		case OPT_PATH:
 			do_path = 1;
@@ -557,11 +557,6 @@ static void readOptions(int argc, char **argv)
 		case 'c':
 			O.c.cflag++;
 			break;
-#if 0
-		case 'd':
-			dump_target = optarg;
-			break;
-#endif
 		case 'f':
 			O.c.file_list = optarg;
 			break;
@@ -599,22 +594,18 @@ static void readOptions(int argc, char **argv)
 		}
 	}
 
-	if (gtagsconf) {
+	if (O.c.gtagsconf) {
 		char path[MAXPATHLEN];
 
-		if (realpath(gtagsconf, path) == NULL)
-			die("%s not found.", gtagsconf);
+		if (realpath(O.c.gtagsconf, path) == NULL)
+			die("%s not found.", O.c.gtagsconf);
 		set_env("GTAGSCONF", path);
 	}
-	if (gtagslabel) {
-		set_env("GTAGSLABEL", gtagslabel);
+	if (O.c.gtagslabel) {
+		set_env("GTAGSLABEL", O.c.gtagslabel);
 	}
 	if (qflag)
 		vflag = 0;
-	if (show_version)
-		version(NULL, vflag);
-	if (show_help)
-		help();
 
 	argc -= optind;
     argv += optind;
@@ -622,15 +613,6 @@ static void readOptions(int argc, char **argv)
 	/* If dbpath is specified, -O(--objdir) option is ignored. */
 	if (argc > 0)
 		Oflag = 0;
-#if 0
-	if (show_config) {
-		if (config_name)
-			printConfig(config_name);
-		else
-			fprintf(stdout, "%s\n", getconfline());
-		exit(0);
-	} else 
-#endif
         if (do_path) {
 		/*
 		 * This is the main body of path filter.
@@ -664,42 +646,6 @@ static void readOptions(int argc, char **argv)
 		strbuf_close(ib);
 		exit(0);
 	}
-#if 0
-    else if (dump_target) {
-		/*
-		 * Dump a tag file.
-		 */
-		DBOP *dbop = NULL;
-		const char *dat = 0;
-		int is_gpath = 0;
-
-		if (!test("f", dump_target))
-			die("file '%s' not found.", dump_target);
-		if ((dbop = dbop_open(dump_target, 0, 0, DBOP_RAW)) == NULL)
-			die("file '%s' is not a tag file.", dump_target);
-		/*
-		 * The file which has a NEXTKEY record is GPATH.
-		 */
-		if (dbop_get(dbop, NEXTKEY))
-			is_gpath = 1;
-		for (dat = dbop_first(dbop, NULL, NULL, 0); dat != NULL; dat = dbop_next(dbop)) {
-			const char *flag = is_gpath ? dbop_getflag(dbop) : "";
-
-			if (*flag)
-				printf("%s\t%s\t%s\n", dbop->lastkey, dat, flag);
-			else
-				printf("%s\t%s\n", dbop->lastkey, dat);
-		}
-		dbop_close(dbop);
-		exit(0);
-	}
-#endif
-#if 0
-    else if (Iflag) {
-		if (!usable("mkid"))
-			die("mkid not found.");
-	}
-#endif
 
 	/*
 	 * If 'gtags.files' exists, use it as a file list.
@@ -723,7 +669,7 @@ static void readOptions(int argc, char **argv)
 	 */
 	if (O.c.single_update) {
 		static char regular_path_name[MAXPATHLEN];
-		char *p = O.c.single_update;
+		const char *p = O.c.single_update;
 		
 		if (!test("f", p))
 			die("'%s' not found.", p);
