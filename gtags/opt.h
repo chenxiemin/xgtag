@@ -26,6 +26,7 @@ struct Options
             int cflag;					/* compact format */
 
             int iflag;					/* incremental update */
+            int Oflag;					/* use objdir */
             const char *file_list;
             const char *single_update;
             const char *gtagsconf;

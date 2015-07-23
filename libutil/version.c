@@ -27,6 +27,7 @@
 #endif
 
 #include "version.h"
+#include "die.h"
 
 const char *copy = "\
 Copyright (c) 2012 Tama Communications Corporation\n\
@@ -54,11 +55,8 @@ version(const char *name, const int verbose)
 	 * if the -q option is not specified then always verbose
 	 * according to the GNU coding standard
 	 */
-	if (qflag)
-		fprintf(stdout, "%s\n", VERSION);
-	else {
-		fprintf(stdout, "%s - %s\n", name, PACKAGE_STRING);
-		fprintf(stdout, "%s", copy);
-	}
+    printf("%s\n", VERSION);
+    LOGD("%s - %s\n", name, PACKAGE_STRING);
+    LOGD("%s", copy);
 	exit(0);
 }

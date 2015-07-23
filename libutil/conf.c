@@ -47,6 +47,7 @@
 #include "strmake.h"
 #include "test.h"
 #include "usable.h"
+#include "die.h"
 
 static FILE *fp;
 static STRBUF *ib;
@@ -240,7 +241,6 @@ openconf(void)
 {
 	STRBUF *sb;
 	const char *config;
-	extern int vflag;
 
 	assert(opened == 0);
 	opened = 1;
@@ -249,8 +249,7 @@ openconf(void)
 	 * if config file not found then return default value.
 	 */
 	if (!(config = configpath())) {
-		if (vflag)
-			fprintf(stderr, " Using default configuration.\n");
+        LOGD(" Using default configuration.\n");
 		confline = check_strdup("");
 	}
 	/*
@@ -278,8 +277,7 @@ openconf(void)
 	
 		if (!(fp = fopen(config, "r")))
 			die("cannot open '%s'.", config);
-		if (vflag)
-			fprintf(stderr, " Using config file '%s'.\n", config);
+        LOGD(" Using config file '%s'.\n", config);
 		ib = strbuf_open(MAXBUFLEN);
 		sb = strbuf_open(0);
 		includelabel(sb, label, 0);

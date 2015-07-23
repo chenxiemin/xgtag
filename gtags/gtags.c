@@ -55,16 +55,24 @@ static void readOptions(int argc, char **argv);
 static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
-void updateTags(const char *, const char *, IDSET *, STRBUF *);
+void updateTags(const char *, const char *, IDSET *, STRBUF *, int);
 void createTags(const char *, const char *);
 int printConfig(const char *);
 
+#if 0
 int Oflag;					/* use objdir */
+#endif
 
 int statistics = STATISTICS_STYLE_NONE;
+#if 0
 int qflag;					/* quiet mode */
+#endif
+#if 0
 int wflag;					/* warning message */
+#endif
+#if 0
 int vflag;					/* verbose mode */
+#endif
 
 char dbpath[MAXPATHLEN];
 char cwd[MAXPATHLEN];
@@ -74,11 +82,13 @@ char cwd[MAXPATHLEN];
 /*
  * Path filter
  */
+#if 0
 int do_path;
 int convert_type = PATH_RELATIVE;
+#endif
 
 // int extractmethod;
-int total;
+// int total;
 
 static struct option const long_options[] = {
 	/*
@@ -106,7 +116,7 @@ static struct option const long_options[] = {
 #define OPT_CONFIG		128
 #define OPT_GTAGSCONF		129
 #define OPT_GTAGSLABEL		130
-#define OPT_PATH		131
+// #define OPT_PATH		131
 #define OPT_SINGLE_UPDATE	132
 #define OPT_ENCODE_PATH		133
 #define OPT_ACCEPT_DOTFILES	134
@@ -119,7 +129,7 @@ static struct option const long_options[] = {
 	{"encode-path", required_argument, NULL, OPT_ENCODE_PATH},
 	{"gtagsconf", required_argument, NULL, OPT_GTAGSCONF},
 	{"gtagslabel", required_argument, NULL, OPT_GTAGSLABEL},
-	{"path", required_argument, NULL, OPT_PATH},
+	// {"path", required_argument, NULL, OPT_PATH},
 	{"single-update", required_argument, NULL, OPT_SINGLE_UPDATE},
 	{ 0 }
 };
@@ -210,7 +220,7 @@ int incremental(const char *dbpath, const char *root)
     // The list of the path name which exists in the current project.
     // A project is limited by the --file option.
     IDSET *findset = idset_open(gpath_nextkey());
-    total = 0;
+    int total = 0;
 
     // Make add list and delete list for update.
     if (O.c.file_list)
@@ -268,7 +278,7 @@ int incremental(const char *dbpath, const char *root)
 
     // update tag
     if (!idset_empty(deleteset) || strbuf_getlen(addlist) > 0)
-        updateTags(dbpath, root, deleteset, addlist);
+        updateTags(dbpath, root, deleteset, addlist, total);
 
     strbuf_close(addlist);
     idset_close(deleteset);
@@ -285,7 +295,8 @@ int incremental(const char *dbpath, const char *root)
  *	i)	deleteset	bit array of fid of deleted or modified files 
  *	i)	addlist		\0 separated list of added or modified files
  */
-void updateTags(const char *dbpath, const char *root, IDSET *deleteset, STRBUF *addlist)
+void updateTags(const char *dbpath, const char *root,
+        IDSET *deleteset, STRBUF *addlist, int total)
 {
 	const char *path, *start, *end;
 
@@ -429,6 +440,7 @@ static void parseGlobalOptions(int argc, char **argv)
     static struct option global_long_options[] = {
         { "version", no_argument, NULL, GLOBAL_OPTION_VERSION },
         { "help", no_argument, NULL, GLOBAL_OPTION_HELP },
+        NULL
     };
 
     char optchar = 0;
@@ -438,7 +450,10 @@ static void parseGlobalOptions(int argc, char **argv)
         switch ((unsigned char)optchar) {
         case 'v':
         case GLOBAL_OPTION_VERSION:
+#if 0
             version(NULL, vflag);
+#endif
+            version(NULL, 1);
             break;
         case 'h':
         case GLOBAL_OPTION_HELP:
@@ -529,6 +544,7 @@ static void readOptions(int argc, char **argv)
 		case OPT_GTAGSLABEL:
 			O.c.gtagslabel = optarg;
 			break;
+#if 0
 		case OPT_PATH:
 			do_path = 1;
 			if (!strcmp("absolute", optarg))
@@ -540,6 +556,7 @@ static void readOptions(int argc, char **argv)
 			else
 				die("Unknown path type.");
 			break;
+#endif
 		case OPT_SINGLE_UPDATE:
 			O.c.iflag++;
 			O.c.single_update = optarg;
@@ -575,17 +592,23 @@ static void readOptions(int argc, char **argv)
 			 */
 			break;
 		case 'O':
-			Oflag++;
+			O.c.Oflag++;
 			break;
 		case 'q':
+#if 0
 			qflag++;
+#endif
 			setquiet();
 			break;
+#if 0
 		case 'w':
 			wflag++;
 			break;
+#endif
 		case 'v':
+#if 0
 			vflag++;
+#endif
 			setverbose();
 			break;
 		default:
@@ -604,15 +627,18 @@ static void readOptions(int argc, char **argv)
 	if (O.c.gtagslabel) {
 		set_env("GTAGSLABEL", O.c.gtagslabel);
 	}
+#if 0
 	if (qflag)
 		vflag = 0;
+#endif
 
 	argc -= optind;
     argv += optind;
 
 	/* If dbpath is specified, -O(--objdir) option is ignored. */
 	if (argc > 0)
-		Oflag = 0;
+		O.c.Oflag = 0;
+#if 0
         if (do_path) {
 		/*
 		 * This is the main body of path filter.
@@ -646,6 +672,7 @@ static void readOptions(int argc, char **argv)
 		strbuf_close(ib);
 		exit(0);
 	}
+#endif
 
 	/*
 	 * If 'gtags.files' exists, use it as a file list.
@@ -701,13 +728,19 @@ static void readOptions(int argc, char **argv)
 	if (O.c.iflag) {
 		if (argc > 0)
 			realpath(*argv, dbpath);
+#if 0
 		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, vflag))
+#endif
+		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, 1))
 			strlimcpy(dbpath, cwd, sizeof(dbpath));
 	} else {
 		if (argc > 0)
 			realpath(*argv, dbpath);
-		else if (Oflag) {
+		else if (O.c.Oflag) {
+#if 0
 			char *objdir = getobjdir(cwd, vflag);
+#endif
+			char *objdir = getobjdir(cwd, 1);
 
 			if (objdir == NULL)
 				die("Objdir not found.");
@@ -718,19 +751,19 @@ static void readOptions(int argc, char **argv)
 	if (O.c.iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
 		!test("f", makepath(dbpath, dbname(GRTAGS), NULL)) ||
 		!test("f", makepath(dbpath, dbname(GPATH), NULL)))) {
-		if (wflag)
-			warning("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
+        LOGW("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
 		O.c.iflag = 0;
 	}
 	if (!test("d", dbpath))
 		die("directory '%s' not found.", dbpath);
-	if (vflag)
-		fprintf(stderr, "[%s] Gtags started.\n", now());
+    LOGD("[%s] Gtags started.\n", now());
 }
 
 static void usage(void)
 {
+#if 0
 	if (!qflag)
+#endif
 		fputs(usage_const, stderr);
 	exit(2);
 }
