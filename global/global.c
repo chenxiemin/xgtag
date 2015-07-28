@@ -1577,94 +1577,18 @@ parsefile(char *const *argv, const char *cwd, const char *root, const char *dbpa
  *	i)	db		GTAGS,GRTAGS,GSYMS
  *	r)			count of output lines
  */
-/* get next number and seek to the next character */
-#define GET_NEXT_NUMBER(p) do {                                                 \
-                if (!isdigit(*p))                                              \
-                        p++;                                                    \
-                for (n = 0; isdigit(*p); p++)                                  \
-                        n = n * 10 + (*p - '0');                                \
-        } while (0)
-int
-search(const char *pattern, const char *root, const char *cwd, const char *dbpath, int db)
+int search(const char *pattern, const char *root,
+        const char *cwd, const char *dbpath, int db)
 {
 	CONVERT *cv;
-	int count = 0;
 	GTOP *gtop;
 	GTP *gtp;
-	int flags = 0;
-	STRBUF *sb = NULL, *ib = NULL;
-	char curpath[MAXPATHLEN], curtag[IDENTLEN];
-	FILE *fp = NULL;
-	const char *src = "";
-	int lineno, last_lineno;
-
-	lineno = last_lineno = 0;
-	curpath[0] = curtag[0] = '\0';
 	
 	// open tag file.
 	gtop = gtags_open(dbpath, root, db, GTAGS_READ, 0);
 
 	cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, db);
 	
-#if 0
-	// search through tag file.
-	if (O.s.nofilter & SORT_FILTER)
-		flags |= GTOP_NOSORT;
-	if (O.s.iflag) {
-		if (!isregex(pattern)) {
-			sb = strbuf_open(0);
-			strbuf_putc(sb, '^');
-			strbuf_puts(sb, pattern);
-			strbuf_putc(sb, '$');
-			pattern = strbuf_value(sb);
-		}
-		flags |= GTOP_IGNORECASE;
-	}
-	if (O.s.Gflag)
-		flags |= GTOP_BASICREGEX;
-	if (O.s.format == FORMAT_PATH)
-		flags |= GTOP_PATH;
-	if (gtop->format & GTAGS_COMPACT)
-		ib = strbuf_open(0);
-	for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop)) {
-		if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
-			continue;
-		if (O.s.format == FORMAT_PATH) {
-			convert_put_path(cv, gtp->path);
-			count++;
-		} else {
-			// Standard format:   a          b         c
-			// tagline = <file id> <tag name> <line no> <line image>
-			char *p = (char *)gtp->tagline;
-			char namebuf[IDENTLEN];
-			const char *fid, *tagname, *image;
-
-			fid = p;
-			while (*p != ' ')
-				p++;
-			*p++ = '\0';			/* a */
-			tagname = p;
-			while (*p != ' ')
-				p++;
-			*p++ = '\0';			/* b */
-			if (gtop->format & GTAGS_COMPNAME) {
-				strlimcpy(namebuf, (char *)uncompress(tagname, gtp->tag), sizeof(namebuf));
-				tagname = namebuf;
-			}
-			if (O.s.nosource) {
-				image = " ";
-			} else {
-				while (*p != ' ')
-					p++;
-				image = p + 1;		/* c + 1 */
-				if (gtop->format & GTAGS_COMPRESS)
-					image = (char *)uncompress(image, gtp->tag);
-			}
-			convert_put_using(cv, tagname, gtp->path, gtp->lineno, image, fid);
-			count++;
-		}
-	}
-#else
     PProjectContext pcontext = NULL;
     do {
         pcontext = project_open(0, root, dbpath, WPATH_MODE_READ);
@@ -1679,18 +1603,10 @@ search(const char *pattern, const char *root, const char *cwd, const char *dbpat
     } while(0);
     project_close(&pcontext);
 
-#endif
 	convert_close(cv);
-#if 0
-	if (sb)
-		strbuf_close(sb);
-	if (ib)
-		strbuf_close(ib);
-	if (fp)
-		fclose(fp);
-#endif
 	gtags_close(gtop);
-	return count;
+
+    return 0;
 }
 
 /*
