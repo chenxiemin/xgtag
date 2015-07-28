@@ -38,8 +38,8 @@ struct put_func_data {
 
 typedef int (*add_project)(void *thiz, const char *file);
 typedef int (*del_set_project)(void *thiz, IDSET *deleteFileIDSet);
-typedef int (*sel_project)(SEL_TYPE_T query, void *res);
 typedef int (*upd_project)(void *thiz, const char *src);
+typedef int (*sel_project)(SEL_TYPE_T query, void *res);
 
 // a project can treate as a folder which contains GTAGS/GPATH/...
 typedef struct ProjectContext
@@ -47,8 +47,8 @@ typedef struct ProjectContext
     add_project add; // add a file in to project
     add_project del; // delete a file from project
     del_set_project delset; // delete file list from project
-    sel_project sel; // query result from project
     upd_project upd; // update a file from project
+    sel_project sel; // query result from project
 
     PParser parser; // set before use project_add and so on
     PWPath path;

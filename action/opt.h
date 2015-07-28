@@ -32,11 +32,19 @@ struct Options
             const char *gtagsconf;
             const char *gtagslabel;
         } c;
+
         struct { // dump options
             const char *dump_target;
             int show_config;
             const char *config_name;
         } d;
+
+        struct { // select options
+            int nofilter;
+            int iflag;				/* [option]		*/
+            int Gflag;				/* [option]		*/
+            int format;
+        } s;
     };
 };
 
