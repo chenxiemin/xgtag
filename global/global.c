@@ -45,6 +45,8 @@
 #include "regex.h"
 #include "const.h"
 #include "opt.h"
+#include "project.h"
+#include "die.h"
 
 static void usage(void);
 static void help(void);
@@ -63,7 +65,9 @@ int search(const char *, const char *, const char *, const char *, int);
 void tagsearch(const char *, const char *, const char *, const char *, int);
 void encode(char *, int, const char *);
 
+#if 0
 const char *localprefix;		/* local prefix		*/
+#endif
 int aflag;				/* [option]		*/
 int cflag;				/* command		*/
 int dflag;				/* command		*/
@@ -76,7 +80,9 @@ int Gflag;				/* [option]		*/
 int iflag;				/* [option]		*/
 #endif
 int Iflag;				/* command		*/
+#if 0
 int lflag;				/* [option]		*/
+#endif
 int Lflag;				/* [option]		*/
 int nflag;				/* [option]		*/
 int oflag;				/* [option]		*/
@@ -97,7 +103,9 @@ int show_help;
 #if 0
 int nofilter;
 #endif
+#if 0
 int nosource;				/* undocumented command */
+#endif
 int debug;
 int literal;				/* 1: literal search	*/
 int print0;				/* -print0 option	*/
@@ -184,7 +192,7 @@ static struct option const long_options[] = {
 	{"version", no_argument, &show_version, 1},
 	{"help", no_argument, &show_help, 1},
 	{"result", required_argument, NULL, RESULT},
-	{"nosource", no_argument, &nosource, 1},
+	{"nosource", no_argument, &(O.s.nosource), 1},
 	{"single-update", required_argument, NULL, SINGLE_UPDATE},
 	{ 0 }
 };
@@ -411,7 +419,7 @@ int main(int argc, char **argv)
 			setcom(optchar);
 			break;
 		case 'l':
-			lflag++;
+			O.s.lflag++;
 			break;
 		case 'L':
 			file_list = optarg;
@@ -621,7 +629,7 @@ int main(int argc, char **argv)
 	if (tflag)
 		xflag = 0;
 	if (nflag > 1)
-		nosource = 1;	/* to keep compatibility */
+		O.s.nosource = 1;	/* to keep compatibility */
 	if (print0)
 		set_print0();
 	if (cflag && match_part == 0)
@@ -732,7 +740,7 @@ int main(int argc, char **argv)
 	 * make local prefix.
 	 * local prefix must starts with './' and ends with '/'.
 	 */
-	if (lflag) {
+	if (O.s.lflag) {
 		STRBUF *sb = strbuf_open(0);
 
 		strbuf_putc(sb, '.');
@@ -743,12 +751,12 @@ int main(int argc, char **argv)
 			strbuf_puts(sb, p);
 		}
 		strbuf_putc(sb, '/');
-		localprefix = check_strdup(strbuf_value(sb));
+		O.s.localprefix = check_strdup(strbuf_value(sb));
 		strbuf_close(sb);
 #ifdef DEBUG
 		fprintf(stderr, "root=%s\n", root);
 		fprintf(stderr, "cwd=%s\n", cwd);
-		fprintf(stderr, "localprefix=%s\n", localprefix);
+		fprintf(stderr, "localprefix=%s\n", O.s.localprefix);
 #endif
 	}
 	/*
@@ -900,7 +908,7 @@ completion(const char *dbpath, const char *root, const char *prefix, int db)
 	/*
 	 * search in library path.
 	 */
-	if (db == GTAGS && getenv("GTAGSLIBPATH") && (count == 0 || Tflag) && !lflag) {
+	if (db == GTAGS && getenv("GTAGSLIBPATH") && (count == 0 || Tflag) && !O.s.lflag) {
 		STRBUF *sb = strbuf_open(0);
 		char *libdir, *nextp = NULL;
 
@@ -1143,8 +1151,8 @@ idutils(const char *pattern, const char *dbpath)
 		if ((xflag || tflag) && !*p)
 			die("invalid lid(idutils) output format(1). '%s'", grep);
 		p++;
-		if (lflag) {
-			if (!locatestring(path, localprefix, MATCH_AT_FIRST))
+		if (O.s.lflag) {
+			if (!locatestring(path, O.s.localprefix, MATCH_AT_FIRST))
 				continue;
 		}
 		count++;
@@ -1232,7 +1240,7 @@ grep(const char *pattern, char *const *argv, const char *dbpath)
 	else if (file_list)
 		args_open_filelist(file_list);
 	else {
-		args_open_gfind(gp = gfind_open(dbpath, localprefix, target));
+		args_open_gfind(gp = gfind_open(dbpath, O.s.localprefix, target));
 		user_specified = 0;
 	}
 	while ((path = args_read()) != NULL) {
@@ -1255,7 +1263,7 @@ grep(const char *pattern, char *const *argv, const char *dbpath)
 			}
 			path = buf;
 		}
-		if (lflag && !locatestring(path, localprefix, MATCH_AT_FIRST))
+		if (O.s.lflag && !locatestring(path, O.s.localprefix, MATCH_AT_FIRST))
 			continue;
 		if (!(fp = fopen(path, "r")))
 			die("cannot open file '%s'.", path);
@@ -1332,17 +1340,17 @@ pathlist(const char *pattern, const char *dbpath)
 		if (regcomp(&preg, pattern, flags) != 0)
 			die("invalid regular expression.");
 	}
-	if (!localprefix)
-		localprefix = "./";
+	if (!O.s.localprefix)
+		O.s.localprefix = "./";
 	cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, GPATH);
 	count = 0;
 
-	gp = gfind_open(dbpath, localprefix, target);
+	gp = gfind_open(dbpath, O.s.localprefix, target);
 	while ((path = gfind_read(gp)) != NULL) {
 		/*
 		 * skip localprefix because end-user doesn't see it.
 		 */
-		p = path + strlen(localprefix) - 1;
+		p = path + strlen(O.s.localprefix) - 1;
 		if (pattern) {
 			int result = regexec(&preg, p, 0, 0, 0);
 
@@ -1538,7 +1546,7 @@ parsefile(char *const *argv, const char *cwd, const char *root, const char *dbpa
 			strlimcpy(s_fid, p, sizeof(s_fid));
 			data.fid = s_fid;
 		}
-		if (lflag && !locatestring(path, localprefix, MATCH_AT_FIRST))
+		if (O.s.lflag && !locatestring(path, O.s.localprefix, MATCH_AT_FIRST))
 			continue;
 		data.count = 0;
 		parse_file(path, flags, put_syms, &data);
@@ -1592,14 +1600,14 @@ search(const char *pattern, const char *root, const char *cwd, const char *dbpat
 
 	lineno = last_lineno = 0;
 	curpath[0] = curtag[0] = '\0';
-	/*
-	 * open tag file.
-	 */
+	
+	// open tag file.
 	gtop = gtags_open(dbpath, root, db, GTAGS_READ, 0);
+
 	cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, db);
-	/*
-	 * search through tag file.
-	 */
+	
+#if 0
+	// search through tag file.
 	if (O.s.nofilter & SORT_FILTER)
 		flags |= GTOP_NOSORT;
 	if (O.s.iflag) {
@@ -1619,144 +1627,14 @@ search(const char *pattern, const char *root, const char *cwd, const char *dbpat
 	if (gtop->format & GTAGS_COMPACT)
 		ib = strbuf_open(0);
 	for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop)) {
-		if (lflag && !locatestring(gtp->path, localprefix, MATCH_AT_FIRST))
+		if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
 			continue;
 		if (O.s.format == FORMAT_PATH) {
 			convert_put_path(cv, gtp->path);
 			count++;
-		} 
-#if 0
-        else if (gtop->format & GTAGS_COMPACT) {
-			/*
-			 * Compact format:
-			 *                    a          b
-			 * tagline = <file id> <tag name> <line no>,...
-			 */
-			char *p = (char *)gtp->tagline;
-			const char *fid, *tagname;
-			int n = 0;
-
-			fid = p;
-			while (*p != ' ')
-				p++;
-			*p++ = '\0';			/* a */
-			tagname = p;
-			while (*p != ' ')
-				p++;
-			*p++ = '\0';			/* b */
-			/*
-			 * Reopen or rewind source file.
-			 */
-			if (!nosource) {
-				if (strcmp(gtp->path, curpath) != 0) {
-					if (curpath[0] != '\0' && fp != NULL)
-						fclose(fp);
-					strlimcpy(curtag, tagname, sizeof(curtag));
-					strlimcpy(curpath, gtp->path, sizeof(curpath));
-					/*
-					 * Use absolute path name to support GTAGSROOT
-					 * environment variable.
-					 */
-					fp = fopen(makepath(root, curpath, NULL), "r");
-					if (fp == NULL)
-						warning("source file '%s' is not available.", curpath);
-					last_lineno = lineno = 0;
-				} else if (strcmp(gtp->tag, curtag) != 0) {
-					strlimcpy(curtag, gtp->tag, sizeof(curtag));
-					if (atoi(p) < last_lineno && fp != NULL) {
-						rewind(fp);
-						lineno = 0;
-					}
-					last_lineno = 0;
-				}
-			}
-			/*
-			 * Unfold compact format.
-			 */
-			if (!isdigit(*p))
-				die("illegal compact format.");
-			if (gtop->format & GTAGS_COMPLINE) {
-				/*
-				 *
-				 * If GTAGS_COMPLINE flag is set, each line number is expressed as
-				 * the difference from the previous line number except for the head.
-				 * Please see flush_pool() in libutil/gtagsop.c for the details.
-				 */
-				int last = 0, cont = 0;
-
-				while (*p || cont > 0) {
-					if (cont > 0) {
-						n = last + 1;
-						if (n > cont) {
-							cont = 0;
-							continue;
-						}
-					} else if (isdigit(*p)) {
-						GET_NEXT_NUMBER(p);
-					}  else if (*p == '-') {
-						GET_NEXT_NUMBER(p);
-						cont = n + last;
-						n = last + 1;
-					} else if (*p == ',') {
-						GET_NEXT_NUMBER(p);
-						n += last;
-					}
-					if (last_lineno != n && fp) {
-						while (lineno < n) {
-							if (!(src = strbuf_fgets(ib, fp, STRBUF_NOCRLF))) {
-								src = "";
-								fclose(fp);
-								fp = NULL;
-								break;
-							}
-							lineno++;
-						}
-					}
-					if (gtop->format & GTAGS_COMPNAME)
-						tagname = (char *)uncompress(tagname, gtp->tag);
-					convert_put_using(cv, tagname, gtp->path, n, src, fid);
-					count++;
-					last_lineno = last = n;
-				}
-			} else {
-				/*
-				 * In fact, when GTAGS_COMPACT is set, GTAGS_COMPLINE is allways set.
-				 * Therefore, the following code are not actually used.
-				 * However, it is left for some test.
-				 */
-				while (*p) {
-					for (n = 0; isdigit(*p); p++)
-						n = n * 10 + *p - '0';
-					if (*p == ',')
-						p++;
-					if (last_lineno == n)
-						continue;
-					if (last_lineno != n && fp) {
-						while (lineno < n) {
-							if (!(src = strbuf_fgets(ib, fp, STRBUF_NOCRLF))) {
-								src = "";
-								fclose(fp);
-								fp = NULL;
-								break;
-							}
-							lineno++;
-						}
-					}
-					if (gtop->format & GTAGS_COMPNAME)
-						tagname = (char *)uncompress(tagname, gtp->tag);
-					convert_put_using(cv, tagname, gtp->path, n, src, fid);
-					count++;
-					last_lineno = n;
-				}
-			}
-		}
-#endif
-        else {
-			/*
-			 * Standard format:
-			 *                    a          b         c
-			 * tagline = <file id> <tag name> <line no> <line image>
-			 */
+		} else {
+			// Standard format:   a          b         c
+			// tagline = <file id> <tag name> <line no> <line image>
 			char *p = (char *)gtp->tagline;
 			char namebuf[IDENTLEN];
 			const char *fid, *tagname, *image;
@@ -1773,7 +1651,7 @@ search(const char *pattern, const char *root, const char *cwd, const char *dbpat
 				strlimcpy(namebuf, (char *)uncompress(tagname, gtp->tag), sizeof(namebuf));
 				tagname = namebuf;
 			}
-			if (nosource) {
+			if (O.s.nosource) {
 				image = " ";
 			} else {
 				while (*p != ' ')
@@ -1786,16 +1664,35 @@ search(const char *pattern, const char *root, const char *cwd, const char *dbpat
 			count++;
 		}
 	}
+#else
+    PProjectContext pcontext = NULL;
+    do {
+        pcontext = project_open(0, root, dbpath, WPATH_MODE_READ);
+        if (NULL == pcontext) {
+            LOGE("Cannot create context");
+            break;
+        }
+
+        int res = project_select(pcontext, pattern, 0, gtop, cv);
+        if (0 != res)
+            LOGE("Cannot select %s from project: %d", pattern, res);
+    } while(0);
+    project_close(&pcontext);
+
+#endif
 	convert_close(cv);
+#if 0
 	if (sb)
 		strbuf_close(sb);
 	if (ib)
 		strbuf_close(ib);
 	if (fp)
 		fclose(fp);
+#endif
 	gtags_close(gtop);
 	return count;
 }
+
 /*
  * tagsearch: execute tag search
  *
@@ -1819,7 +1716,7 @@ tagsearch(const char *pattern, const char *cwd, const char *root, const char *db
 	/*
 	 * search in library path.
 	 */
-	if (db == GTAGS && getenv("GTAGSLIBPATH") && (count == 0 || Tflag) && !lflag) {
+	if (db == GTAGS && getenv("GTAGSLIBPATH") && (count == 0 || Tflag) && !O.s.lflag) {
 		STRBUF *sb = strbuf_open(0);
 		char *libdir, *nextp = NULL;
 

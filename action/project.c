@@ -22,6 +22,12 @@
 #include "project.h"
 #include "die.h"
 #include "opt.h"
+#include "format.h"
+#include "pathconvert.h"
+#include "locatestring.h"
+#include "compress.h"
+
+#define SORT_FILTER     1
 
 typedef struct
 {
@@ -36,6 +42,8 @@ static void project_parser_cb(int type, const char *tag,
 // simple project operation functions
 int project_simple_add(void *thiz, const char *file);
 int project_simple_del_set(void *thiz, IDSET *delset);
+int project_simple_select(void *thiz, const char *pattern,
+        SEL_TYPE_T query, GTOP *gtop, void *res);
 
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
@@ -63,6 +71,7 @@ PProjectContext project_open(int type, const char *root,
     // fill operation
     pcontext->super.add = project_simple_add;
     pcontext->super.delset = project_simple_del_set;
+    pcontext->super.sel = project_simple_select;
 
     return (PProjectContext)pcontext;
 }
@@ -159,6 +168,18 @@ int project_update(PProjectContext pcontext, const char *src)
     }
 }
 
+int project_select(PProjectContext pcontext, const char *pattern,
+        SEL_TYPE_T query, GTOP *gtop, void *res)
+{
+    if (NULL == pcontext || NULL == res || NULL == pattern ||
+            NULL == gtop) {
+        LOGE("Invalid argument");
+        return -1;
+    }
+
+    return pcontext->sel(pcontext, pattern, query, gtop, res);
+}
+
 static void project_parser_cb(int type, const char *tag,
         int lno, const char *path, const char *line_image, void *arg)
 {
@@ -224,6 +245,86 @@ int project_simple_del_set(void *thiz, IDSET *delset)
             LOGE("Cannot delete file id: %d", i);
     }
     
+    return 0;
+}
+
+int project_simple_select(void *thiz, const char *pattern,
+        SEL_TYPE_T query, GTOP *gtop, void *res)
+{
+    // search through tag file.
+    // set search flag
+	int flags = 0;
+	STRBUF *sb = NULL;
+    STRBUF *ib = NULL;
+    if (O.s.nofilter & SORT_FILTER)
+        flags |= GTOP_NOSORT;
+    if (O.s.iflag) {
+        if (!isregex(pattern)) {
+            sb = strbuf_open(0);
+            strbuf_putc(sb, '^');
+            strbuf_puts(sb, pattern);
+            strbuf_putc(sb, '$');
+            pattern = strbuf_value(sb);
+        }
+        flags |= GTOP_IGNORECASE;
+    }
+    if (O.s.Gflag)
+        flags |= GTOP_BASICREGEX;
+    if (O.s.format == FORMAT_PATH)
+        flags |= GTOP_PATH;
+    if (gtop->format & GTAGS_COMPACT)
+        ib = strbuf_open(0);
+
+    // get convert
+	CONVERT *cv = (CONVERT *)res;
+
+    // iterator result
+    int count = 0;
+	GTP *gtp = NULL;
+    for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop)) {
+        if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
+            continue;
+        if (O.s.format == FORMAT_PATH) {
+            convert_put_path(cv, gtp->path);
+            count++;
+        } else {
+            // Standard format:   a          b         c
+            // tagline = <file id> <tag name> <line no> <line image>
+            char *p = (char *)gtp->tagline;
+            char namebuf[IDENTLEN];
+            const char *fid, *tagname, *image;
+
+            fid = p;
+            while (*p != ' ')
+                p++;
+            *p++ = '\0';			/* a */
+            tagname = p;
+            while (*p != ' ')
+                p++;
+            *p++ = '\0';			/* b */
+            if (gtop->format & GTAGS_COMPNAME) {
+                strlimcpy(namebuf, uncompress(tagname, gtp->tag),
+                        (int)sizeof(namebuf));
+                tagname = namebuf;
+            }
+            if (O.s.nosource) {
+                image = " ";
+            } else {
+                while (*p != ' ')
+                    p++;
+                image = p + 1;		/* c + 1 */
+                if (gtop->format & GTAGS_COMPRESS)
+                    image = uncompress(image, gtp->tag);
+            }
+            convert_put_using(cv, tagname, gtp->path, gtp->lineno, image, fid);
+            count++;
+        }
+    }
+
+	if (sb)
+		strbuf_close(sb);
+	if (ib)
+		strbuf_close(ib);
     return 0;
 }
 

@@ -43,7 +43,10 @@ struct Options
             int nofilter;
             int iflag;				/* [option]		*/
             int Gflag;				/* [option]		*/
+            int lflag;				/* [option]		*/
             int format;
+            const char *localprefix;		/* local prefix		*/
+            int nosource;				/* undocumented command */
         } s;
     };
 };
