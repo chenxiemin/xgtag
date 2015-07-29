@@ -169,15 +169,20 @@ int project_update(PProjectContext pcontext, const char *src)
 }
 
 int project_select(PProjectContext pcontext, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout)
+        SEL_TYPE_T query, int db, POutput pout)
 {
     if (NULL == pcontext || NULL == pout || NULL == pattern ||
-            NULL == gtop) {
+            (GTAGS != db && GRTAGS != db)) {
         LOGE("Invalid argument");
         return -1;
     }
+    ProjectContextDefault *pdc = (ProjectContextDefault *)pcontext;
+    if (NULL == pdc->data.gtop[db]) {
+        LOGE("Invalid parameter");
+        return -2;
+    }
 
-    return pcontext->sel(pcontext, pattern, query, gtop, pout);
+    return pcontext->sel(pcontext, pattern, query, pdc->data.gtop[db], pout);
 }
 
 static void project_parser_cb(int type, const char *tag,
@@ -275,9 +280,6 @@ int project_simple_select(void *thiz, const char *pattern,
     if (gtop->format & GTAGS_COMPACT)
         ib = strbuf_open(0);
 
-    // get convert
-	// CONVERT *cv = (CONVERT *)res;
-
     // iterator result
     int count = 0;
 	GTP *gtp = NULL;
@@ -285,7 +287,6 @@ int project_simple_select(void *thiz, const char *pattern,
         if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
             continue;
         if (O.s.format == FORMAT_PATH) {
-            // convert_put_path(cv, gtp->path);
             output_put_path(pout, gtp->path);
             count++;
         } else {
@@ -317,7 +318,6 @@ int project_simple_select(void *thiz, const char *pattern,
                 if (gtop->format & GTAGS_COMPRESS)
                     image = uncompress(image, gtp->tag);
             }
-            // convert_put_using(cv, tagname, gtp->path, gtp->lineno, image, fid);
             output_put_tag(pout, tagname, gtp->path, gtp->lineno, image, fid);
             count++;
         }

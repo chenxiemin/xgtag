@@ -74,7 +74,7 @@ int project_del_set(PProjectContext pcontext, IDSET *deleteFileIDSet);
 int project_update(PProjectContext pcontext, const char *src);
 
 int project_select(PProjectContext pcontext, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout);
+        SEL_TYPE_T query, int db, POutput pout);
 
 #endif
 

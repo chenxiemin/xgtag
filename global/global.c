@@ -1581,14 +1581,7 @@ parsefile(char *const *argv, const char *cwd, const char *root, const char *dbpa
 int search(const char *pattern, const char *root,
         const char *cwd, const char *dbpath, int db)
 {
-	CONVERT *cv;
-	GTOP *gtop;
-	GTP *gtp;
-	
-	// open tag file.
-	gtop = gtags_open(dbpath, root, db, GTAGS_READ, 0);
-
-	// cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, db);
+    // open context
     POutput pout = NULL;
     PProjectContext pcontext = NULL;
     do {
@@ -1604,17 +1597,15 @@ int search(const char *pattern, const char *root,
             break;
         }
 
-        // int res = project_select(pcontext, pattern, 0, gtop, cv);
-        int res = project_select(pcontext, pattern, 0, gtop, pout);
+        // select
+        int res = project_select(pcontext, pattern, 0, db, pout);
         if (0 != res)
             LOGE("Cannot select %s from project: %d", pattern, res);
     } while(0);
 
+    // close context
     project_close(&pcontext);
     output_close(&pout);
-
-	// convert_close(cv);
-	gtags_close(gtop);
 
     return 0;
 }
