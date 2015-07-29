@@ -24,6 +24,7 @@
 #include "gtagsop.h"
 #include "idset.h"
 #include "wpath.h"
+#include "output.h"
 
 typedef enum
 {
@@ -40,7 +41,7 @@ typedef int (*add_project)(void *thiz, const char *file);
 typedef int (*del_set_project)(void *thiz, IDSET *deleteFileIDSet);
 typedef int (*upd_project)(void *thiz, const char *src);
 typedef int (*sel_project)(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, void *res);
+        SEL_TYPE_T query, GTOP *gtop, POutput pout);
 
 // a project can treate as a folder which contains GTAGS/GPATH/...
 typedef struct ProjectContext
@@ -73,7 +74,7 @@ int project_del_set(PProjectContext pcontext, IDSET *deleteFileIDSet);
 int project_update(PProjectContext pcontext, const char *src);
 
 int project_select(PProjectContext pcontext, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, void *res);
+        SEL_TYPE_T query, GTOP *gtop, POutput pout);
 
 #endif
 

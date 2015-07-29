@@ -43,7 +43,7 @@ static void project_parser_cb(int type, const char *tag,
 int project_simple_add(void *thiz, const char *file);
 int project_simple_del_set(void *thiz, IDSET *delset);
 int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, void *res);
+        SEL_TYPE_T query, GTOP *gtop, POutput pout);
 
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
@@ -169,15 +169,15 @@ int project_update(PProjectContext pcontext, const char *src)
 }
 
 int project_select(PProjectContext pcontext, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, void *res)
+        SEL_TYPE_T query, GTOP *gtop, POutput pout)
 {
-    if (NULL == pcontext || NULL == res || NULL == pattern ||
+    if (NULL == pcontext || NULL == pout || NULL == pattern ||
             NULL == gtop) {
         LOGE("Invalid argument");
         return -1;
     }
 
-    return pcontext->sel(pcontext, pattern, query, gtop, res);
+    return pcontext->sel(pcontext, pattern, query, gtop, pout);
 }
 
 static void project_parser_cb(int type, const char *tag,
@@ -249,7 +249,7 @@ int project_simple_del_set(void *thiz, IDSET *delset)
 }
 
 int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, void *res)
+        SEL_TYPE_T query, GTOP *gtop, POutput pout)
 {
     // search through tag file.
     // set search flag
@@ -276,7 +276,7 @@ int project_simple_select(void *thiz, const char *pattern,
         ib = strbuf_open(0);
 
     // get convert
-	CONVERT *cv = (CONVERT *)res;
+	// CONVERT *cv = (CONVERT *)res;
 
     // iterator result
     int count = 0;
@@ -285,7 +285,8 @@ int project_simple_select(void *thiz, const char *pattern,
         if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
             continue;
         if (O.s.format == FORMAT_PATH) {
-            convert_put_path(cv, gtp->path);
+            // convert_put_path(cv, gtp->path);
+            output_put_path(pout, gtp->path);
             count++;
         } else {
             // Standard format:   a          b         c
@@ -316,7 +317,8 @@ int project_simple_select(void *thiz, const char *pattern,
                 if (gtop->format & GTAGS_COMPRESS)
                     image = uncompress(image, gtp->tag);
             }
-            convert_put_using(cv, tagname, gtp->path, gtp->lineno, image, fid);
+            // convert_put_using(cv, tagname, gtp->path, gtp->lineno, image, fid);
+            output_put_tag(pout, tagname, gtp->path, gtp->lineno, image, fid);
             count++;
         }
     }

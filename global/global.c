@@ -47,6 +47,7 @@
 #include "opt.h"
 #include "project.h"
 #include "die.h"
+#include "output.h"
 
 static void usage(void);
 static void help(void);
@@ -1587,23 +1588,32 @@ int search(const char *pattern, const char *root,
 	// open tag file.
 	gtop = gtags_open(dbpath, root, db, GTAGS_READ, 0);
 
-	cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, db);
-	
+	// cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, db);
+    POutput pout = NULL;
     PProjectContext pcontext = NULL;
     do {
+        pout = output_open(type, O.s.format, root, cwd, dbpath, stdout, db);
+        if (NULL == pout) {
+            LOGE("Cannot open output");
+            break;
+        }
+
         pcontext = project_open(0, root, dbpath, WPATH_MODE_READ);
         if (NULL == pcontext) {
             LOGE("Cannot create context");
             break;
         }
 
-        int res = project_select(pcontext, pattern, 0, gtop, cv);
+        // int res = project_select(pcontext, pattern, 0, gtop, cv);
+        int res = project_select(pcontext, pattern, 0, gtop, pout);
         if (0 != res)
             LOGE("Cannot select %s from project: %d", pattern, res);
     } while(0);
-    project_close(&pcontext);
 
-	convert_close(cv);
+    project_close(&pcontext);
+    output_close(&pout);
+
+	// convert_close(cv);
 	gtags_close(gtop);
 
     return 0;
