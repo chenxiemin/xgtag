@@ -62,6 +62,12 @@ int wpath_nextID(PWPath pwpath);
 // is src contained in path
 int wpath_isExist(PWPath pwpath, const char *src);
 
+// get db path
+const char *wpath_getDB(PWPath pwpath);
+
+// get project root path
+const char *wpath_getRoot(PWPath pwpath);
+
 #if 0
 int wpath_exist(PWPath pwpath, const char *src);
 #endif

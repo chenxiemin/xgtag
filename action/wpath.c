@@ -32,6 +32,7 @@
 #include "gtagsop.h"
 #include "makepath.h"
 #include "strbuf.h"
+#include "assert.h"
 
 struct WPath
 {
@@ -192,6 +193,18 @@ int wpath_deleteByID(PWPath pwpath, int id)
     // free buf
     strbuf_close(pathBuf);
     return 0;
+}
+
+const char *wpath_getDB(PWPath pwpath)
+{
+    assert(NULL != pwpath);
+    return pwpath->db;
+}
+
+const char *wpath_getRoot(PWPath pwpath)
+{
+    assert(NULL != pwpath);
+    return pwpath->root;
 }
 
 WPATH_SOURCE_TYPE_T wpath_getSourceType(const char *src)

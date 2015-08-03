@@ -28,7 +28,8 @@
 
 typedef enum
 {
-    SEL_TYPE_UNKNOWN
+    SEL_TYPE_DEFINE,
+    SEL_TYPE_PATH
 } SEL_TYPE_T;
 
 // TODO reconstruct

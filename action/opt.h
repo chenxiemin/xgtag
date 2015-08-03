@@ -47,6 +47,7 @@ struct Options
             int format;
             const char *localprefix;		/* local prefix		*/
             int nosource;				/* undocumented command */
+            int Pflag;				/* command		*/
         } s;
     };
 };

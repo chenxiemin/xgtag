@@ -26,6 +26,7 @@
 #include "pathconvert.h"
 #include "locatestring.h"
 #include "compress.h"
+#include "gpathop.h"
 
 #define SORT_FILTER     1
 
@@ -253,8 +254,8 @@ int project_simple_del_set(void *thiz, IDSET *delset)
     return 0;
 }
 
-int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout)
+int project_simple_select_define(void *thiz, const char *pattern,
+        GTOP *gtop, POutput pout)
 {
     // search through tag file.
     // set search flag
@@ -281,14 +282,13 @@ int project_simple_select(void *thiz, const char *pattern,
         ib = strbuf_open(0);
 
     // iterator result
-    int count = 0;
 	GTP *gtp = NULL;
     for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop)) {
-        if (O.s.lflag && !locatestring(gtp->path, O.s.localprefix, MATCH_AT_FIRST))
+        if (O.s.lflag && !locatestring(
+                    gtp->path, O.s.localprefix, MATCH_AT_FIRST))
             continue;
         if (O.s.format == FORMAT_PATH) {
             output_put_path(pout, gtp->path);
-            count++;
         } else {
             // Standard format:   a          b         c
             // tagline = <file id> <tag name> <line no> <line image>
@@ -319,14 +319,80 @@ int project_simple_select(void *thiz, const char *pattern,
                     image = uncompress(image, gtp->tag);
             }
             output_put_tag(pout, tagname, gtp->path, gtp->lineno, image, fid);
-            count++;
         }
     }
 
+    // cleanup
 	if (sb)
 		strbuf_close(sb);
 	if (ib)
 		strbuf_close(ib);
     return 0;
+}
+
+int project_simple_select_path(void *thiz, const char *pattern,
+        GTOP *gtop, POutput pout)
+{
+    ProjectContextDefault *pdcontext = (ProjectContextDefault *)thiz;
+
+    // compile regex
+    regex_t preg;
+    if (pattern) {
+        int flags = 0;
+
+        if (!O.s.Gflag)
+            flags |= REG_EXTENDED;
+        if (O.s.iflag || getconfb("icase_path"))
+            flags |= REG_ICASE;
+#ifdef _WIN32
+        flags |= REG_ICASE;
+#endif /* _WIN32 */
+
+        // We assume '^aaa' as '^/aaa'.
+        if (regcomp(&preg, pattern, flags) != 0)
+            die("invalid regular expression.");
+    }
+    if (!O.s.localprefix)
+        O.s.localprefix = "./";
+
+	GFIND *gp = gfind_open(wpath_getDB(pdcontext->super.path),
+            O.s.localprefix, GPATH_SOURCE);
+    int lplen = strlen(O.s.localprefix);
+    const char *path = NULL;
+	while ((path = gfind_read(gp)) != NULL) {
+		if (pattern) {
+            // skip localprefix because end-user doesn't see it.
+			int result = regexec(&preg, path + lplen, 0, 0, 0);
+
+            if (0 != result)
+                continue;
+		}
+
+		if (O.s.format == FORMAT_PATH)
+            output_put_path(pout, path);
+		else
+            output_put_tag(pout, "path", path, 1, " ", gp->dbop->lastdat);
+	}
+
+	gfind_close(gp);
+	if (pattern)
+		regfree(&preg);
+}
+
+int project_simple_select(void *thiz, const char *pattern,
+        SEL_TYPE_T query, GTOP *gtop, POutput pout)
+{
+    switch (query)
+    {
+    case SEL_TYPE_DEFINE:
+        return project_simple_select_define(thiz, pattern, gtop, pout);
+        break;
+    case SEL_TYPE_PATH:
+        return project_simple_select_path(thiz, pattern, gtop, pout);
+        break;
+    default:
+        LOGE("Unknwon select type: %d", query);
+        return -1;
+    }
 }
 

@@ -89,7 +89,9 @@ int nflag;				/* [option]		*/
 int oflag;				/* [option]		*/
 int Oflag;				/* [option]		*/
 int pflag;				/* command		*/
+#if 0
 int Pflag;				/* command		*/
+#endif
 int qflag;				/* [option]		*/
 int rflag;				/* [option]		*/
 int sflag;				/* [option]		*/
@@ -447,7 +449,7 @@ int main(int argc, char **argv)
 			setcom(optchar);
 			break;
 		case 'P':
-			Pflag++;
+			O.s.Pflag++;
 			setcom(optchar);
 			break;
 		case 'q':
@@ -641,7 +643,7 @@ int main(int argc, char **argv)
 	if (!Iflag && !gflag && av)
 		for (; *av == ' ' || *av == '\t'; av++)
 			;
-	if (cflag && !Pflag && av && isregex(av))
+	if (cflag && !O.s.Pflag && av && isregex(av))
 		die_with_code(2, "only name char is allowed with -c option.");
 	/*
 	 * get path of following directories.
@@ -731,7 +733,7 @@ int main(int argc, char **argv)
 	if (cflag) {
 		if (Iflag)
 			completion_idutils(dbpath, root, av);
-		else if (Pflag)
+		else if (O.s.Pflag)
 			completion_path(dbpath, av);
 		else
 			completion(dbpath, root, av, db);
@@ -796,7 +798,7 @@ int main(int argc, char **argv)
 	/*
 	 * locate paths including the pattern.
 	 */
-	else if (Pflag) {
+	else if (O.s.Pflag) {
 		chdir(root);
 		pathlist(av, dbpath);
 	}
@@ -1309,17 +1311,12 @@ grep(const char *pattern, char *const *argv, const char *dbpath)
 void
 pathlist(const char *pattern, const char *dbpath)
 {
-	GFIND *gp;
-	CONVERT *cv;
-	const char *path, *p;
-	regex_t preg;
-	int count;
-	int target = GPATH_SOURCE;
+    POutput pout = NULL;
+#if 0
+	const char *path;
 
-	if (oflag)
-		target = GPATH_BOTH;
-	if (Oflag)
-		target = GPATH_OTHER;
+    // compile regex
+	regex_t preg;
 	if (pattern) {
 		int flags = 0;
 		char edit[IDENTLEN];
@@ -1331,9 +1328,8 @@ pathlist(const char *pattern, const char *dbpath)
 #ifdef _WIN32
 		flags |= REG_ICASE;
 #endif /* _WIN32 */
-		/*
-		 * We assume '^aaa' as '^/aaa'.
-		 */
+		
+		// We assume '^aaa' as '^/aaa'.
 		if (*pattern == '^' && *(pattern + 1) != '/') {
 			snprintf(edit, sizeof(edit), "^/%s", pattern + 1);
 			pattern = edit;
@@ -1343,47 +1339,67 @@ pathlist(const char *pattern, const char *dbpath)
 	}
 	if (!O.s.localprefix)
 		O.s.localprefix = "./";
-	cv = convert_open(type, O.s.format, root, cwd, dbpath, stdout, GPATH);
-	count = 0;
+#endif
 
-	gp = gfind_open(dbpath, O.s.localprefix, target);
-	while ((path = gfind_read(gp)) != NULL) {
-		/*
-		 * skip localprefix because end-user doesn't see it.
-		 */
-		p = path + strlen(O.s.localprefix) - 1;
-		if (pattern) {
-			int result = regexec(&preg, p, 0, 0, 0);
+    PProjectContext pcontext = NULL;
+    PWPath wpath = NULL;
+    do {
+        pout = output_open(type, O.s.format, root, cwd, dbpath, stdout, GPATH);
+        if (NULL == pout) {
+            LOGE("Cannot open output");
+            die("die");
+        }
 
-			if ((!Vflag && result != 0) || (Vflag && result == 0))
-				continue;
-		} else if (Vflag)
-			continue;
-		if (O.s.format == FORMAT_PATH)
-			convert_put_path(cv, path);
-		else
-			convert_put_using(cv, "path", path, 1, " ", gp->dbop->lastdat);
-		count++;
-	}
+        pcontext = project_open(0, root, dbpath, WPATH_MODE_READ);
+        if (NULL == pcontext) {
+            LOGE("Cannot create context");
+            break;
+        }
+
+        wpath = wpath_open(dbpath, cwd, WPATH_MODE_READ);
+        if (NULL == wpath) {
+            LOGE("Cannot open wpath");
+            break;
+        }
+        pcontext->path = wpath;
+
+        // select
+        int res = project_select(pcontext, pattern, SEL_TYPE_PATH, GTAGS, pout);
+        if (0 != res)
+            LOGE("Cannot select %s from project: %d", pattern, res);
+#if 0
+        GFIND *gp = gfind_open(dbpath, O.s.localprefix, GPATH_SOURCE);
+        int lplen = strlen(O.s.localprefix) - 1;
+        while ((path = gfind_read(gp)) != NULL) {
+            if (pattern) {
+                // skip localprefix because end-user doesn't see it.
+                int result = regexec(&preg, path + lplen, 0, 0, 0);
+
+                if (0 != result)
+                    continue;
+            }
+
+            if (O.s.format == FORMAT_PATH)
+                output_put_path(pout, path);
+            else
+                output_put_tag(pout, "path", path, 1, " ", gp->dbop->lastdat);
+        }
+#endif
+
+    } while(0);
+
+    wpath_close(&wpath);
+    project_close(&pcontext);
+    // free
+    output_close(&pout);
+
+#if 0
 	gfind_close(gp);
-	convert_close(cv);
 	if (pattern)
 		regfree(&preg);
-	if (vflag) {
-		switch (count) {
-		case 0:
-			fprintf(stderr, "file not found");
-			break;
-		case 1:
-			fprintf(stderr, "1 file located");
-			break;
-		default:
-			fprintf(stderr, "%d files located", count);
-			break;
-		}
-		fprintf(stderr, " (using '%s').\n", makepath(dbpath, dbname(GPATH), NULL));
-	}
+#endif
 }
+
 /*
  * parsefile: parse file to pick up tags.
  *
@@ -1598,7 +1614,7 @@ int search(const char *pattern, const char *root,
         }
 
         // select
-        int res = project_select(pcontext, pattern, 0, db, pout);
+        int res = project_select(pcontext, pattern, SEL_TYPE_DEFINE, db, pout);
         if (0 != res)
             LOGE("Cannot select %s from project: %d", pattern, res);
     } while(0);
