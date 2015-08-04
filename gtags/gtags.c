@@ -49,7 +49,6 @@ PWPath GlobalPath = NULL;
 int main(int, char **);
 static void parseOptions(int argc, char **argv);
 static void parseGlobalOptions(int argc, char **argv);
-static void dumpCommandDo();
 static void readOptions(int argc, char **argv);
 static void usage(void);
 static void help(void);
@@ -376,15 +375,24 @@ typedef struct
 } CommandParseList;
 
 static void dumpCommandParser(int argc, char **argv);
+static void searchCommandParser(int argc, char **argv);
+static void dumpCommandDo();
+static void searchCommandDo();
 
 static void parseOptions(int argc, char **argv)
 {
     static CommandParseList CommandList[] = {
-        { "d", "dump", dumpCommandParser, dumpCommandDo }
+        { "d", "dump", dumpCommandParser, dumpCommandDo },
+        { "s", "search", searchCommandParser, searchCommandDo }
     };
 
+    // prepare path
+	if (!getcwd(cwd, MAXPATHLEN))
+		die("cannot get current directory.");
+	canonpath(cwd);
+    strlimcpy(dbpath, cwd, sizeof(dbpath));
+
     optind = 1;
-    parseGlobalOptions(argc, argv);
 
     if (argc > 1) {
         int i = 0;
@@ -406,6 +414,10 @@ static void parseOptions(int argc, char **argv)
         }
     }
 
+    // global options
+    parseGlobalOptions(argc, argv);
+
+    // normal options
     readOptions(argc, argv);
 }
 
@@ -448,18 +460,20 @@ static void dumpCommandParser(int argc, char **argv)
 	while ((optchar = getopt_long(argc, argv, "c",
                     NULL, &option_index)) != EOF) {
         switch (optchar) {
-            case 'c':
+        case 'c':
 			O.d.show_config = 1;
 			if (optarg)
 				O.d.config_name = optarg;
             break;
+        default:
+            break;
         }
     }
 
-    if (1 != optind) {
-        argc -= optind;
-        argv += optind;
-    }
+    optind--;
+    argc -= optind;
+    argv += optind;
+
     if (argc > 1)
         O.d.dump_target = argv[1];
 }
@@ -500,6 +514,96 @@ static void dumpCommandDo()
 		else
 			printf("%s\n", getconfline());
     }
+}
+
+static void searchCommandParser(int argc, char **argv)
+{
+#define RESULT		128
+    static struct option const search_long_options[] = {
+        {"result", required_argument, NULL, RESULT},
+        NULL
+    };
+
+    if (argc < 2)
+        usage();
+
+    // default format
+    O.s.format = FORMAT_CTAGS;
+    O.s.type = PATH_RELATIVE;
+
+	int option_index = 0;
+    char optchar = '0';
+	while ((optchar = getopt_long(argc, argv, "ap",
+                    search_long_options, &option_index)) != EOF) {
+        switch ((unsigned char)optchar) {
+        case 'a':
+            O.s.type = PATH_ABSOLUTE;
+            break;
+        case 'p':
+			O.s.Pflag++;
+            O.s.format = FORMAT_PATH; // default path format
+            break;
+        case RESULT:
+			if (!strcmp(optarg, "ctags-x"))
+				O.s.format = FORMAT_CTAGS_X;
+			else if (!strcmp(optarg, "ctags-xid"))
+				O.s.format = FORMAT_CTAGS_XID;
+			else if (!strcmp(optarg, "ctags"))
+				O.s.format = FORMAT_CTAGS;
+			else if (!strcmp(optarg, "ctags-mod"))
+				O.s.format = FORMAT_CTAGS_MOD;
+			else if (!strcmp(optarg, "path"))
+				O.s.format = FORMAT_PATH;
+			else if (!strcmp(optarg, "grep"))
+				O.s.format = FORMAT_GREP;
+			else if (!strcmp(optarg, "cscope"))
+				O.s.format = FORMAT_CSCOPE;
+			else
+				die_with_code(2, "unknown format type");
+			break;
+        default:
+            break;
+        }
+    }
+
+    optind--;
+    argc -= optind;
+    argv += optind;
+
+    if (argc != 2)
+        die("invalid param");
+    O.s.pattern = argv[1];
+}
+
+static void searchCommandDo()
+{
+    // open context
+    POutput pout = NULL;
+    PProjectContext pcontext = NULL;
+    do {
+        pout = output_open(O.s.type, O.s.format,
+                cwd, cwd, dbpath, stdout, GTAGS);
+        if (NULL == pout) {
+            LOGE("Cannot open output");
+            break;
+        }
+
+        pcontext = project_open(0, cwd, dbpath, WPATH_MODE_READ);
+        if (NULL == pcontext) {
+            LOGE("Cannot create context");
+            break;
+        }
+
+        // select
+        int res = project_select(pcontext, O.s.pattern,
+                SEL_TYPE_DEFINE, GTAGS, pout);
+        if (0 != res)
+            LOGE("Cannot select %s from project: %d", O.s.pattern, res);
+    } while(0);
+
+    // close context
+    project_close(&pcontext);
+    output_close(&pout);
 }
 
 static void readOptions(int argc, char **argv)

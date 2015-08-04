@@ -48,6 +48,8 @@ struct Options
             const char *localprefix;		/* local prefix		*/
             int nosource;				/* undocumented command */
             int Pflag;				/* command		*/
+            int type;               /* path search type: relative / absolute */
+            const char *pattern;    /* search pattern, path or tag */
         } s;
     };
 };

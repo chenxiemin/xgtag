@@ -1312,37 +1312,9 @@ void
 pathlist(const char *pattern, const char *dbpath)
 {
     POutput pout = NULL;
-#if 0
-	const char *path;
-
-    // compile regex
-	regex_t preg;
-	if (pattern) {
-		int flags = 0;
-		char edit[IDENTLEN];
-
-		if (!O.s.Gflag)
-			flags |= REG_EXTENDED;
-		if (O.s.iflag || getconfb("icase_path"))
-			flags |= REG_ICASE;
-#ifdef _WIN32
-		flags |= REG_ICASE;
-#endif /* _WIN32 */
-		
-		// We assume '^aaa' as '^/aaa'.
-		if (*pattern == '^' && *(pattern + 1) != '/') {
-			snprintf(edit, sizeof(edit), "^/%s", pattern + 1);
-			pattern = edit;
-		}
-		if (regcomp(&preg, pattern, flags) != 0)
-			die("invalid regular expression.");
-	}
-	if (!O.s.localprefix)
-		O.s.localprefix = "./";
-#endif
-
     PProjectContext pcontext = NULL;
     PWPath wpath = NULL;
+
     do {
         pout = output_open(type, O.s.format, root, cwd, dbpath, stdout, GPATH);
         if (NULL == pout) {
@@ -1367,37 +1339,13 @@ pathlist(const char *pattern, const char *dbpath)
         int res = project_select(pcontext, pattern, SEL_TYPE_PATH, GTAGS, pout);
         if (0 != res)
             LOGE("Cannot select %s from project: %d", pattern, res);
-#if 0
-        GFIND *gp = gfind_open(dbpath, O.s.localprefix, GPATH_SOURCE);
-        int lplen = strlen(O.s.localprefix) - 1;
-        while ((path = gfind_read(gp)) != NULL) {
-            if (pattern) {
-                // skip localprefix because end-user doesn't see it.
-                int result = regexec(&preg, path + lplen, 0, 0, 0);
-
-                if (0 != result)
-                    continue;
-            }
-
-            if (O.s.format == FORMAT_PATH)
-                output_put_path(pout, path);
-            else
-                output_put_tag(pout, "path", path, 1, " ", gp->dbop->lastdat);
-        }
-#endif
 
     } while(0);
 
+    // free
     wpath_close(&wpath);
     project_close(&pcontext);
-    // free
     output_close(&pout);
-
-#if 0
-	gfind_close(gp);
-	if (pattern)
-		regfree(&preg);
-#endif
 }
 
 /*
