@@ -49,7 +49,6 @@ PWPath GlobalPath = NULL;
 int main(int, char **);
 static void parseOptions(int argc, char **argv);
 static void parseGlobalOptions(int argc, char **argv);
-static void readOptions(int argc, char **argv);
 static void usage(void);
 static void help(void);
 int incremental(const char *, const char *);
@@ -57,60 +56,10 @@ void updateTags(const char *, const char *, IDSET *, STRBUF *, int);
 void createTags(const char *, const char *);
 int printConfig(const char *);
 
-
 int statistics = STATISTICS_STYLE_NONE;
 
 char dbpath[MAXPATHLEN];
 char cwd[MAXPATHLEN];
-
-#define GTAGSFILES "gtags.files"
-
-static struct option const long_options[] = {
-	/*
-	 * These options have long name and short name.
-	 * We throw them to the processing of short options.
-	 *
-	 * Though the -o(--omit-gsyms) was removed, this code
-	 * is left for compatibility.
-	 */
-	{"compact", no_argument, NULL, 'c'},
-	{"dump", required_argument, NULL, 'd'},
-	{"file", required_argument, NULL, 'f'},
-	// {"idutils", no_argument, NULL, 'I'},
-	{"incremental", no_argument, NULL, 'i'},
-	{"max-args", required_argument, NULL, 'n'},
-	{"omit-gsyms", no_argument, NULL, 'o'},		/* removed */
-	{"objdir", no_argument, NULL, 'O'},
-	{"quiet", no_argument, NULL, 'q'},
-	{"verbose", no_argument, NULL, 'v'},
-	{"warning", no_argument, NULL, 'w'},
-
-	/*
-	 * The following are long name only.
-	 */
-#define OPT_CONFIG		128
-#define OPT_GTAGSCONF		129
-#define OPT_GTAGSLABEL		130
-// #define OPT_PATH		131
-#define OPT_SINGLE_UPDATE	132
-#define OPT_ENCODE_PATH		133
-#define OPT_ACCEPT_DOTFILES	134
-	/* flag value */
-	{"accept-dotfiles", no_argument, NULL, OPT_ACCEPT_DOTFILES},
-	{"statistics", no_argument, &statistics, STATISTICS_STYLE_TABLE},
-
-	/* accept value */
-	{"config", optional_argument, NULL, OPT_CONFIG},
-	{"encode-path", required_argument, NULL, OPT_ENCODE_PATH},
-	{"gtagsconf", required_argument, NULL, OPT_GTAGSCONF},
-	{"gtagslabel", required_argument, NULL, OPT_GTAGSLABEL},
-	// {"path", required_argument, NULL, OPT_PATH},
-	{"single-update", required_argument, NULL, OPT_SINGLE_UPDATE},
-	{ 0 }
-};
-
-// static const char *langmap = DEFAULTLANGMAP;
-// static const char *gtags_parser;
 
 int main(int argc, char **argv)
 {
@@ -123,57 +72,6 @@ int main(int argc, char **argv)
 
     // read options
     parseOptions(argc, argv);
-
-#if 0
-    // phase 2
-    // init parser
-    GlobalParser = wparser_open();
-    if (NULL == GlobalParser) {
-        LOGE("Cannot open parser");
-        return -1;
-    }
-    // decide mode
-    WPATH_MODE_T mode = WPATH_MODE_CREATE;
-    if (O.c.iflag)
-        mode = WPATH_MODE_MODIFY;
-    // init wpath
-    GlobalPath = wpath_open(dbpath, cwd, mode);
-    if (NULL == GlobalPath) {
-        LOGE("Cannot open wpath");
-        return -1;
-    }
-    // init project
-    GlobalProject = project_open(0, dbpath, cwd, mode);
-    if (NULL == GlobalProject)
-        die("Cannot open project: %s %s", dbpath, cwd);
-    GlobalProject->parser = GlobalParser;
-    GlobalProject->path = GlobalPath;
-
-    // make tag processing
-    if (O.c.iflag) {
-        LOGD("Incremental updating for tag: %s", dbpath);
-        if (O.c.single_update) {
-            // get source type
-            WPATH_SOURCE_TYPE_T type = wpath_getSourceType(O.c.single_update);
-            if (WPATH_SOURCE_TYPE_SOURCE == type)
-                project_update(GlobalProject, O.c.single_update);
-            else
-                LOGD("Ignore source type %d: %s", type, O.c.single_update);
-        } else {
-            incremental(dbpath, cwd); // single update a file
-        }
-    } else {
-        createTags(dbpath, cwd); // create GTAGS and GRTAGS
-    }
-	
-    LOGD("[%s] Done.\n", now());
-
-    // clean up
-    // clean up phase 1
-    wpath_close(&GlobalPath);
-    project_close(&GlobalProject);
-    wparser_close(&GlobalParser);
-#endif
 
     // cleanup phase2
 	closeconf();
@@ -421,9 +319,6 @@ static void parseOptions(int argc, char **argv)
 
     // global options
     parseGlobalOptions(argc, argv);
-
-    // normal options
-    readOptions(argc, argv);
 }
 
 static void parseGlobalOptions(int argc, char **argv)
@@ -701,167 +596,6 @@ static void searchCommandDo()
     wpath_close(&wpath);
     project_close(&pcontext);
     output_close(&pout);
-}
-
-static void readOptions(int argc, char **argv)
-{
-	int option_index = 0;
-	int optchar;
-	while ((optchar = getopt_long(argc, argv, "cd:f:in:oOqvwse", long_options, &option_index)) != EOF) {
-		switch (optchar) {
-		case 0:
-			/* already flags set */
-			break;
-		case OPT_GTAGSCONF:
-			O.c.gtagsconf = optarg;
-			break;
-		case OPT_GTAGSLABEL:
-			O.c.gtagslabel = optarg;
-			break;
-		case OPT_SINGLE_UPDATE:
-			O.c.iflag++;
-			O.c.single_update = optarg;
-			break;
-		case OPT_ENCODE_PATH:
-			if (strlen(optarg) > 255)
-				die("too many encode chars.");
-			if (strchr(optarg, '/') || strchr(optarg, '.'))
-				die("cannot encode '/' and '.' in the path.");
-			set_encode_chars((unsigned char *)optarg);
-			break;
-		case OPT_ACCEPT_DOTFILES:
-			set_accept_dotfiles();
-			break;
-		case 'c':
-			O.c.cflag++;
-			break;
-		case 'f':
-			O.c.file_list = optarg;
-			break;
-		case 'i':
-			O.c.iflag++;
-			break;
-        /* // no use anymore
-		case 'I':
-			Iflag++;
-			break;
-        */
-		case 'o':
-			/*
-			 * Though the -o(--omit-gsyms) was removed, this code
-			 * is left for compatibility.
-			 */
-			break;
-		case 'O':
-			O.c.Oflag++;
-			break;
-		case 'q':
-			setquiet();
-			break;
-		case 'v':
-			setverbose();
-			break;
-		default:
-			usage();
-			break;
-		}
-	}
-
-	if (O.c.gtagsconf) {
-		char path[MAXPATHLEN];
-
-		if (realpath(O.c.gtagsconf, path) == NULL)
-			die("%s not found.", O.c.gtagsconf);
-		set_env("GTAGSCONF", path);
-	}
-	if (O.c.gtagslabel) {
-		set_env("GTAGSLABEL", O.c.gtagslabel);
-	}
-
-	argc -= optind;
-    argv += optind;
-
-	/* If dbpath is specified, -O(--objdir) option is ignored. */
-	if (argc > 0)
-		O.c.Oflag = 0;
-
-	/*
-	 * If 'gtags.files' exists, use it as a file list.
-	 * If the file_list other than "-" is given, it must be readable file.
-	 */
-	if (O.c.file_list == NULL && test("f", GTAGSFILES))
-		O.c.file_list = GTAGSFILES;
-	if (O.c.file_list && strcmp(O.c.file_list, "-")) {
-		if (test("d", O.c.file_list))
-			die("'%s' is a directory.", O.c.file_list);
-		else if (!test("f", O.c.file_list))
-			die("'%s' not found.", O.c.file_list);
-		else if (!test("r", O.c.file_list))
-			die("'%s' is not readable.", O.c.file_list);
-	}
-	if (!getcwd(cwd, MAXPATHLEN))
-		die("cannot get current directory.");
-	canonpath(cwd);
-	/*
-	 * Regularize the path name for single updating (--single-update).
-	 */
-	if (O.c.single_update) {
-		static char regular_path_name[MAXPATHLEN];
-		const char *p = O.c.single_update;
-		
-		if (!test("f", p))
-			die("'%s' not found.", p);
-		if (isabspath(p)) {
-			char *q = locatestring(p, cwd, MATCH_AT_FIRST);
-
-			if (q && *q == '/')
-				snprintf(regular_path_name, MAXPATHLEN, "./%s", q + 1);
-			else
-				die("path '%s' is out of the project.", p);
-
-		} else {
-			if (p[0] == '.' && p[1] == '/')
-				snprintf(regular_path_name, MAXPATHLEN, "%s", p);
-			else
-				snprintf(regular_path_name, MAXPATHLEN, "./%s", p);
-		}
-		O.c.single_update = regular_path_name;
-	}
-	/*
-	 * Decide directory (dbpath) in which gtags make tag files.
-	 *
-	 * Gtags create tag files at current directory by default.
-	 * If dbpath is specified as an argument then use it.
-	 * If the -i option specified and both GTAGS and GRTAGS exists
-	 * at one of the candidate directories then gtags use existing
-	 * tag files.
-	 */
-	if (O.c.iflag) {
-		if (argc > 0)
-			realpath(*argv, dbpath);
-		else if (!gtagsexist(cwd, dbpath, MAXPATHLEN, 1))
-			strlimcpy(dbpath, cwd, sizeof(dbpath));
-	} else {
-		if (argc > 0)
-			realpath(*argv, dbpath);
-		else if (O.c.Oflag) {
-			char *objdir = getobjdir(cwd, 1);
-
-			if (objdir == NULL)
-				die("Objdir not found.");
-			strlimcpy(dbpath, objdir, sizeof(dbpath));
-		} else
-			strlimcpy(dbpath, cwd, sizeof(dbpath));
-	}
-	if (O.c.iflag && (!test("f", makepath(dbpath, dbname(GTAGS), NULL)) ||
-		!test("f", makepath(dbpath, dbname(GRTAGS), NULL)) ||
-		!test("f", makepath(dbpath, dbname(GPATH), NULL)))) {
-        LOGW("GTAGS, GRTAGS or GPATH not found. -i option ignored.");
-		O.c.iflag = 0;
-	}
-	if (!test("d", dbpath))
-		die("directory '%s' not found.", dbpath);
-    LOGD("[%s] Gtags started.\n", now());
 }
 
 static void usage(void)
