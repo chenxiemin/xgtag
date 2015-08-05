@@ -533,11 +533,14 @@ static void searchCommandParser(int argc, char **argv)
 
 	int option_index = 0;
     char optchar = '0';
-	while ((optchar = getopt_long(argc, argv, "ap",
+	while ((optchar = getopt_long(argc, argv, "ape",
                     search_long_options, &option_index)) != EOF) {
         switch ((unsigned char)optchar) {
         case 'a':
             O.s.type = PATH_ABSOLUTE;
+            break;
+        case 'e':
+            O.s.eflag = 1;
             break;
         case 'p':
 			O.s.Pflag++;
@@ -572,7 +575,13 @@ static void searchCommandParser(int argc, char **argv)
 
     if (argc != 2)
         die("invalid param");
-    O.s.pattern = argv[1];
+
+    // create pattern
+    if (O.s.eflag)
+        snprintf(O.s.pattern, MAX_PATTERN_LENGTH, "%s", argv[1]);
+    else
+        snprintf(O.s.pattern, MAX_PATTERN_LENGTH, "%s$", argv[1]);
+    LOGD("Use search pattern: %s", O.s.pattern);
 }
 
 static void searchCommandDo()
@@ -580,6 +589,8 @@ static void searchCommandDo()
     // open context
     POutput pout = NULL;
     PProjectContext pcontext = NULL;
+    PWPath wpath = NULL;
+
     do {
         pout = output_open(O.s.type, O.s.format,
                 cwd, cwd, dbpath, stdout, GTAGS);
@@ -594,14 +605,27 @@ static void searchCommandDo()
             break;
         }
 
+        wpath = wpath_open(dbpath, cwd, WPATH_MODE_READ);
+        if (NULL == wpath) {
+            LOGE("Cannot open wpath");
+            break;
+        }
+        pcontext->path = wpath;
+
         // select
-        int res = project_select(pcontext, O.s.pattern,
-                SEL_TYPE_DEFINE, GTAGS, pout);
+        int res = -1;
+        if (O.s.Pflag)
+            res = project_select(pcontext, O.s.pattern,
+                    SEL_TYPE_PATH, GTAGS, pout);
+        else
+            res = project_select(pcontext, O.s.pattern,
+                    SEL_TYPE_DEFINE, GTAGS, pout);
         if (0 != res)
             LOGE("Cannot select %s from project: %d", O.s.pattern, res);
     } while(0);
 
     // close context
+    wpath_close(&wpath);
     project_close(&pcontext);
     output_close(&pout);
 }

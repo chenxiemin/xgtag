@@ -19,6 +19,8 @@
 #ifndef _OPT_H_
 #define _OPT_H_
 
+#define MAX_PATTERN_LENGTH 1024
+
 struct Options
 {
     union {
@@ -49,7 +51,9 @@ struct Options
             int nosource;				/* undocumented command */
             int Pflag;				/* command		*/
             int type;               /* path search type: relative / absolute */
-            const char *pattern;    /* search pattern, path or tag */
+            // const char *pattern;    /* search pattern, path or tag */
+            char pattern[MAX_PATTERN_LENGTH + 1];    /* search pattern, path or tag */
+            int eflag;				/* regular expression search */
         } s;
     };
 };
