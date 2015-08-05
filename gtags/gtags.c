@@ -117,11 +117,14 @@ int main(int argc, char **argv)
     // phase 1
 	// Start statistics.
 	init_statistics();
-    // read options
-    parseOptions(argc, argv);
+
     // load configuration file.
     openconf();
 
+    // read options
+    parseOptions(argc, argv);
+
+#if 0
     // phase 2
     // init parser
     GlobalParser = wparser_open();
@@ -170,6 +173,7 @@ int main(int argc, char **argv)
     wpath_close(&GlobalPath);
     project_close(&GlobalProject);
     wparser_close(&GlobalParser);
+#endif
 
     // cleanup phase2
 	closeconf();
@@ -374,6 +378,8 @@ typedef struct
     cmd_do docmd;
 } CommandParseList;
 
+static void createCommandParser(int argc, char **argv);
+static void createCommandDo();
 static void dumpCommandParser(int argc, char **argv);
 static void searchCommandParser(int argc, char **argv);
 static void dumpCommandDo();
@@ -383,7 +389,8 @@ static void parseOptions(int argc, char **argv)
 {
     static CommandParseList CommandList[] = {
         { "d", "dump", dumpCommandParser, dumpCommandDo },
-        { "s", "search", searchCommandParser, searchCommandDo }
+        { "s", "search", searchCommandParser, searchCommandDo },
+        { "c", "create", createCommandParser, createCommandDo }
     };
 
     // prepare path
@@ -391,8 +398,6 @@ static void parseOptions(int argc, char **argv)
 		die("cannot get current directory.");
 	canonpath(cwd);
     strlimcpy(dbpath, cwd, sizeof(dbpath));
-
-    optind = 1;
 
     if (argc > 1) {
         int i = 0;
@@ -425,9 +430,11 @@ static void parseGlobalOptions(int argc, char **argv)
 {
 #define GLOBAL_OPTION_VERSION 150
 #define GLOBAL_OPTION_HELP 151
+#define GLOBAL_OPTION_DEBUG 152
     static struct option global_long_options[] = {
         { "version", no_argument, NULL, GLOBAL_OPTION_VERSION },
         { "help", no_argument, NULL, GLOBAL_OPTION_HELP },
+        { "debug", required_argument, NULL, GLOBAL_OPTION_DEBUG },
         NULL
     };
 
@@ -440,6 +447,16 @@ static void parseGlobalOptions(int argc, char **argv)
         case GLOBAL_OPTION_VERSION:
             version(NULL, 1);
             break;
+        case GLOBAL_OPTION_DEBUG:
+			if (0 == strcmp(optarg, "debug"))
+                setverbose();
+            else if (0 == strcmp(optarg, "info"))
+                setdebug();
+            else if (0 == strcmp(optarg, "error"))
+                setquiet();
+            else
+                die("invalid argument for debug: %s", optarg);
+            break;
         case 'h':
         case GLOBAL_OPTION_HELP:
             help();
@@ -448,6 +465,62 @@ static void parseGlobalOptions(int argc, char **argv)
             break;
         }
     }
+}
+
+static void createCommandParser(int argc, char **argv)
+{
+    char optchar = 0;
+    int option_index = 0;
+	while ((optchar = getopt_long(argc, argv, "u:",
+                    NULL, &option_index)) != EOF) {
+        switch ((unsigned char)optchar) {
+        case 'u':
+            O.c.iflag = 1;
+            O.c.single_update = optarg;
+            break;
+        default:
+            break;
+        }
+    }
+    optind--;
+    argc -= optind;
+    argv += optind;
+}
+
+static void createCommandDo()
+{
+    // phase 2
+    // init parser
+    GlobalParser = wparser_open();
+    if (NULL == GlobalParser) {
+        LOGE("Cannot open parser");
+        return;
+    }
+    // decide mode
+    WPATH_MODE_T mode = WPATH_MODE_CREATE;
+    if (O.c.iflag)
+        mode = WPATH_MODE_MODIFY;
+    // init wpath
+    GlobalPath = wpath_open(dbpath, cwd, mode);
+    if (NULL == GlobalPath) {
+        LOGE("Cannot open wpath");
+        return;
+    }
+    // init project
+    GlobalProject = project_open(0, dbpath, cwd, mode);
+    if (NULL == GlobalProject)
+        die("Cannot open project: %s %s", dbpath, cwd);
+    GlobalProject->parser = GlobalParser;
+    GlobalProject->path = GlobalPath;
+
+    if (O.c.iflag)
+        incremental(dbpath, cwd);
+    else
+        createTags(dbpath, cwd);
+
+    wpath_close(&GlobalPath);
+    project_close(&GlobalProject);
+    wparser_close(&GlobalParser);
 }
 
 static void dumpCommandParser(int argc, char **argv)

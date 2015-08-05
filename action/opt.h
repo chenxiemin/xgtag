@@ -56,6 +56,7 @@ struct Options
             int eflag;				/* regular expression search */
         } s;
     };
+
 };
 
 extern struct Options O;
