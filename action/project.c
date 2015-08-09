@@ -276,47 +276,68 @@ int project_simple_select_define(void *thiz, const char *pattern,
     }
     if (O.s.Gflag)
         flags |= GTOP_BASICREGEX;
+#if 0
     if (O.s.format == FORMAT_PATH)
         flags |= GTOP_PATH;
+#endif
     if (gtop->format & GTAGS_COMPACT)
         ib = strbuf_open(0);
 
     // iterator result
 	GTP *gtp = NULL;
-    for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop)) {
-        if (O.s.lflag && !locatestring(
-                    gtp->path, O.s.localprefix, MATCH_AT_FIRST))
+    for (gtp = gtags_first(gtop, pattern, flags); gtp; gtp = gtags_next(gtop))
+    {
+        // if do not under current folder
+        if (O.s.lflag && !locatestring(gtp->path,
+                    O.s.localprefix, MATCH_AT_FIRST))
             continue;
-        if (O.s.format == FORMAT_PATH) {
-            output_put_path(pout, gtp->path);
-        } else {
-            // Standard format:   a          b         c
-            // tagline = <file id> <tag name> <line no> <line image>
-            char *p = (char *)gtp->tagline;
-            char namebuf[IDENTLEN];
-            const char *fid, *tagname, *image;
 
-            fid = p;
-            while (*p != ' ')
-                p++;
-            *p++ = '\0';			/* a */
-            tagname = p;
-            while (*p != ' ')
-                p++;
-            *p++ = '\0';			/* b */
-            if (gtop->format & GTAGS_COMPNAME) {
-                strlimcpy(namebuf, uncompress(tagname, gtp->tag),
-                        (int)sizeof(namebuf));
-                tagname = namebuf;
-            }
+        // Standard format:   a          b         c
+        // tagline = <file id> <tag name> <line no> <line image>
+        char *p = (char *)gtp->tagline;
+        char namebuf[IDENTLEN];
+        const char *fid, *tagname, *image;
+        
+        // get fid
+        fid = p;
+        while (*p != ' ')
+            p++;
+        *p++ = '\0';			/* a */
+
+        // get tag name
+        tagname = p;
+        while (*p != ' ')
+            p++;
+        *p++ = '\0';			/* b */
+        if (gtop->format & GTAGS_COMPNAME) {
+            strlimcpy(namebuf, uncompress(tagname, gtp->tag),
+                    (int)sizeof(namebuf));
+            tagname = namebuf;
+        }
+
+        // select
+        if (O.s.format == FORMAT_PATH) {
+#if 1
+            output_put_path(pout, gtp->path);
+#else
+            // put tag name
+            output_put_path(pout, tagname);
+#endif
+        } else {
+
             if (O.s.nosource) {
                 image = " ";
             } else {
-                while (*p != ' ')
+                while (*p != ' ' && '\0' != *p)
                     p++;
-                image = p + 1;		/* c + 1 */
-                if (gtop->format & GTAGS_COMPRESS)
-                    image = uncompress(image, gtp->tag);
+
+                if ('\0' == *p) { // no tag image
+                    image = tagname;
+                } else {
+                    image = p + 1;		/* c + 1 */
+                    if (gtop->format & GTAGS_COMPRESS)
+                        image = uncompress(image, gtp->tag);
+                }
             }
             output_put_tag(pout, tagname, gtp->path, gtp->lineno, image, fid);
         }

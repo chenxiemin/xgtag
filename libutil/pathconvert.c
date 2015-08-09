@@ -428,6 +428,9 @@ convert_put_using(CONVERT *cv, const char *tag, const char *path, int lineno, co
 		else
 			fputs("<unknown>", cv->op);
 		break;
+	case FORMAT_TAG:
+		fputs(tag, cv->op);
+        break;
 	default:
 		die("unknown format type.");
 	}

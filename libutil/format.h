@@ -65,6 +65,7 @@
 #define FORMAT_PATH		5
 #define FORMAT_GREP		6
 #define FORMAT_CSCOPE		7
+#define FORMAT_TAG		8
 
 /*
  * FORMAT_CTAGS_X

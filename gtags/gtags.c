@@ -325,11 +325,9 @@ static void parseGlobalOptions(int argc, char **argv)
 {
 #define GLOBAL_OPTION_VERSION 150
 #define GLOBAL_OPTION_HELP 151
-#define GLOBAL_OPTION_DEBUG 152
     static struct option global_long_options[] = {
         { "version", no_argument, NULL, GLOBAL_OPTION_VERSION },
         { "help", no_argument, NULL, GLOBAL_OPTION_HELP },
-        { "debug", required_argument, NULL, GLOBAL_OPTION_DEBUG },
         NULL
     };
 
@@ -341,16 +339,6 @@ static void parseGlobalOptions(int argc, char **argv)
         case 'v':
         case GLOBAL_OPTION_VERSION:
             version(NULL, 1);
-            break;
-        case GLOBAL_OPTION_DEBUG:
-			if (0 == strcmp(optarg, "debug"))
-                setverbose();
-            else if (0 == strcmp(optarg, "info"))
-                setdebug();
-            else if (0 == strcmp(optarg, "error"))
-                setquiet();
-            else
-                die("invalid argument for debug: %s", optarg);
             break;
         case 'h':
         case GLOBAL_OPTION_HELP:
@@ -487,8 +475,10 @@ static void dumpCommandDo()
 static void searchCommandParser(int argc, char **argv)
 {
 #define RESULT		128
+#define GLOBAL_OPTION_DEBUG 152
     static struct option const search_long_options[] = {
         {"result", required_argument, NULL, RESULT},
+        { "log", required_argument, NULL, GLOBAL_OPTION_DEBUG },
         NULL
     };
 
@@ -501,7 +491,7 @@ static void searchCommandParser(int argc, char **argv)
 
 	int option_index = 0;
     char optchar = '0';
-	while ((optchar = getopt_long(argc, argv, "ape",
+	while ((optchar = getopt_long(argc, argv, "apes",
                     search_long_options, &option_index)) != EOF) {
         switch ((unsigned char)optchar) {
         case 'a':
@@ -513,6 +503,9 @@ static void searchCommandParser(int argc, char **argv)
         case 'p':
 			O.s.Pflag++;
             O.s.format = FORMAT_PATH; // default path format
+            break;
+        case 's':
+            O.s.sflag++;
             break;
         case RESULT:
 			if (!strcmp(optarg, "ctags-x"))
@@ -529,9 +522,21 @@ static void searchCommandParser(int argc, char **argv)
 				O.s.format = FORMAT_GREP;
 			else if (!strcmp(optarg, "cscope"))
 				O.s.format = FORMAT_CSCOPE;
+			else if (!strcmp(optarg, "tag"))
+				O.s.format = FORMAT_TAG;
 			else
 				die_with_code(2, "unknown format type");
 			break;
+        case GLOBAL_OPTION_DEBUG:
+			if (0 == strcmp(optarg, "debug"))
+                setverbose();
+            else if (0 == strcmp(optarg, "info"))
+                setdebug();
+            else if (0 == strcmp(optarg, "error"))
+                setquiet();
+            else
+                die("invalid argument for debug: %s", optarg);
+            break;
         default:
             break;
         }
@@ -582,14 +587,26 @@ static void searchCommandDo()
 
         // select
         int res = -1;
-        if (O.s.Pflag)
+        if (O.s.Pflag) {
             res = project_select(pcontext, O.s.pattern,
                     SEL_TYPE_PATH, GTAGS, pout);
-        else
+        } else {
+            // search tag define
             res = project_select(pcontext, O.s.pattern,
                     SEL_TYPE_DEFINE, GTAGS, pout);
-        if (0 != res)
-            LOGE("Cannot select %s from project: %d", O.s.pattern, res);
+            if (0 != res) {
+                LOGE("Cannot select %s from project: %d", O.s.pattern, res);
+                break;
+            }
+
+            // search tag reference
+            if (O.s.sflag) {
+                res = project_select(pcontext, O.s.pattern,
+                        SEL_TYPE_DEFINE, GRTAGS, pout);
+                if (0 != res)
+                    LOGE("Cannot select reference %s: %d", O.s.pattern, res);
+            }
+        }
     } while(0);
 
     // close context

@@ -46,6 +46,7 @@ struct Options
             int iflag;				/* [option]		*/
             int Gflag;				/* [option]		*/
             int lflag;				/* [option]		*/
+            int sflag;				/* [option]		*/
             int format;
             const char *localprefix;		/* local prefix		*/
             int nosource;				/* undocumented command */
