@@ -32,12 +32,6 @@ typedef enum
     SEL_TYPE_PATH
 } SEL_TYPE_T;
 
-// TODO reconstruct
-struct put_func_data {
-	GTOP *gtop[GTAGLIM];
-	const char *fid;
-};
-
 typedef int (*add_project)(void *thiz, const char *file);
 typedef int (*del_set_project)(void *thiz, IDSET *deleteFileIDSet);
 typedef int (*upd_project)(void *thiz, const char *src);
