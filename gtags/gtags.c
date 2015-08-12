@@ -318,7 +318,10 @@ static void parseOptions(int argc, char **argv)
     }
 
     // global options
-    parseGlobalOptions(argc, argv);
+    if (argc > 1)
+        parseGlobalOptions(argc, argv);
+    else
+        LOGE("select a command");
 }
 
 static void parseGlobalOptions(int argc, char **argv)

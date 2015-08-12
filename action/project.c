@@ -24,24 +24,6 @@
 #include "opt.h"
 #include "project_simple_opt.h"
 
-
-#if 0
-typedef struct
-{
-    struct ProjectContext super; // inherit super class
-    struct put_func_data data;
-} ProjectContextSimple;
-
-static void project_parser_cb(int type, const char *tag,
-        int lno, const char *path, const char *line_image, void *arg);
-
-// simple project operation functions
-int project_simple_add(void *thiz, const char *file);
-int project_simple_del_set(void *thiz, IDSET *delset);
-int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout);
-#endif
-
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
 {

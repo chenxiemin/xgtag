@@ -535,7 +535,7 @@ function! s:AutoUpdateGtags()
     "     echo "not exist"
 	" 	return
 	" endif
-	exec system(s:global_command . " --single-update " . expand("%"))
+	exec system("xtag c -u " . expand("%"))
 endfunction
 
 " bind update gtags when save file

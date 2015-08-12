@@ -64,17 +64,20 @@ PWPath wpath_open(const char *db, const char *root, WPATH_MODE_T mode)
         LOGE("Cannot make db path");
         return NULL;
     }
+
+    // create wpath object
+    PWPath pwpath = (PWPath)malloc(sizeof(struct WPath));
+    memset(pwpath, 0, sizeof(struct WPath));
+
 	struct stat statp;
 	if (stat(path, &statp) < 0)
-		die("stat failed '%s'.", path);
+        pwpath->modifyTime = 0;
+    else
+        pwpath->modifyTime = statp.st_mtime;
 
 	if (gpath_open(db, (int)mode) < 0)
 		die("GPATH not found.");
     
-    PWPath pwpath = (PWPath)malloc(sizeof(struct WPath));
-    memset(pwpath, 0, sizeof(struct WPath));
-
-    pwpath->modifyTime = statp.st_mtime;
 
     strcpy(pwpath->db, db);
     strcpy(pwpath->root, root);
