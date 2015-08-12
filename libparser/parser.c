@@ -219,7 +219,7 @@ unload_plugin_parser(void)
 static const struct lang_entry lang_switch[] = {
 	/* lang_name    parser_proc	parser_name	lt_dl_name,	*/
 	/*				(for debug)	(for debug)	*/
-	{"c",		C,		"C",		"builtin"},	/* DEFAULT */
+	{"c",		Cpp,		"C",		"builtin"},	/* DEFAULT */
 	{"yacc",	yacc,		"yacc",		"builtin"},
 	{"cpp",		Cpp,		"Cpp",		"builtin"},
 	{"java",	java,		"java",		"builtin"},
