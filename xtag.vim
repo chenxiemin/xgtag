@@ -499,8 +499,20 @@ endfunction
 " Custom completion.
 "
 function! GtagsCandidate(lead, line, pos)
-    let s:option = s:Extract(a:line, 'option')
-    return GtagsCandidateCore(a:lead, a:line, a:pos)
+    let a:args = "xtag s --result=tag -e "
+    for word in split(a:line, ' ')
+        if "Gtags" == word
+            continue
+        endif
+        let a:args = a:args . ' ' . word
+    endfor
+    let a:args = a:args . " | awk -F / '{print $NF'} | uniq"
+
+    " let a:args = "xtag s --result=tag -pe  | uniq"
+    " let g:cmdline = a:args
+    " set statusline=%{l:ReturnVariable(g:cmdline)}
+
+    return system(a:args)
 endfunction
 
 function l:ReturnVariable(var)
@@ -522,7 +534,7 @@ function! GtagsCandidateCore(lead, line, pos)
         endif
         return glob(l:pattern)
     else 
-        let l:cmd = s:global_command . ' --result=tag -e' . s:option . " '" . a:lead . "*" .  "'"
+        let l:cmd = s:global_command . ' --result=tag -e ' . s:option . " '" . a:lead . "*" .  "'"
         let l:cmd = l:cmd . " | uniq"
         " set statusline=%{l:ReturnVariable(l:cmd)}
         " let &ro = &ro
