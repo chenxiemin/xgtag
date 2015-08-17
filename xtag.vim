@@ -506,7 +506,7 @@ function! GtagsCandidate(lead, line, pos)
         endif
         let a:args = a:args . ' ' . word
     endfor
-    let a:args = a:args . " | awk -F / '{print $NF'} | uniq"
+    let a:args = a:args . "\\* | awk -F / '{print $NF'} | uniq"
 
     " let a:args = "xtag s --result=tag -pe  | uniq"
     " let g:cmdline = a:args
