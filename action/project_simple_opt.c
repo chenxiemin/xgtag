@@ -17,6 +17,7 @@
  */
 
 #include <assert.h>
+#include <stdlib.h>
 
 #include "project_simple_opt.h"
 #include "opt.h"
@@ -28,6 +29,51 @@
 #include "format.h"
 
 #define SORT_FILTER     1
+
+ProjectContextSimple *project_simple_open(int type, const char *root,
+        const char *db, WPATH_MODE_T mode)
+{
+    ProjectContextSimple *pcontext = (ProjectContextSimple *)
+        malloc(sizeof(ProjectContextSimple));
+    if (NULL == pcontext) {
+        LOGE("Cannot create project context");
+        return NULL;
+    }
+    memset(pcontext, 0, sizeof(ProjectContextSimple));
+    LOGD("open project at root %s db %s: %p", root, db, pcontext);
+
+	int openflags = O.c.cflag ? GTAGS_COMPACT : 0;
+    // open  gtags
+	pcontext->data.gtop[GTAGS] = gtags_open(
+            db, root, GTAGS, (int)mode, openflags);
+    pcontext->data.gtop[GTAGS]->flags = GTAGS_EXTRACTMETHOD;
+
+    // open grtags
+	pcontext->data.gtop[GRTAGS] = gtags_open(
+            db, root, GRTAGS, (int)mode, openflags);
+	pcontext->data.gtop[GRTAGS]->flags = pcontext->data.gtop[GTAGS]->flags;
+
+    // fill operation
+    pcontext->super.add = project_simple_add;
+    pcontext->super.delset = project_simple_del_set;
+    pcontext->super.sel = project_simple_select;
+
+    return pcontext;
+}
+
+void project_simple_close(ProjectContextSimple *pcontext)
+{
+    if (NULL == pcontext)
+        return;
+    LOGD("close project at: %p", pcontext);
+
+    // close tags
+	gtags_close(pcontext->data.gtop[GTAGS]);
+	gtags_close(pcontext->data.gtop[GRTAGS]);
+
+    // free context
+    free(pcontext);
+}
 
 static void project_parser_cb(int type, const char *tag,
         int lno, const char *path, const char *line_image, void *arg)
@@ -259,8 +305,15 @@ int project_simple_select_path(void *thiz, const char *pattern,
 }
 
 int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout)
+        SEL_TYPE_T query, int db, POutput pout)
 {
+    ProjectContextSimple *pdc = (ProjectContextSimple *)thiz;
+    if (NULL == pdc->data.gtop[db]) {
+        LOGE("Invalid parameter");
+        return -2;
+    }
+
+    GTOP *gtop = pdc->data.gtop[db];
     switch (query)
     {
     case SEL_TYPE_DEFINE:

@@ -27,48 +27,15 @@
 PProjectContext project_open(int type, const char *root,
         const char *db, WPATH_MODE_T mode)
 {
-    ProjectContextSimple *pcontext = (ProjectContextSimple *)
-        malloc(sizeof(ProjectContextSimple));
-    if (NULL == pcontext) {
-        LOGE("Cannot create project context");
-        return NULL;
-    }
-    memset(pcontext, 0, sizeof(ProjectContextSimple));
-    LOGD("open project at root %s db %s: %p", root, db, pcontext);
-
-	int openflags = O.c.cflag ? GTAGS_COMPACT : 0;
-    // open  gtags
-	pcontext->data.gtop[GTAGS] = gtags_open(
-            db, root, GTAGS, (int)mode, openflags);
-    pcontext->data.gtop[GTAGS]->flags = GTAGS_EXTRACTMETHOD;
-
-    // open grtags
-	pcontext->data.gtop[GRTAGS] = gtags_open(
-            db, root, GRTAGS, (int)mode, openflags);
-	pcontext->data.gtop[GRTAGS]->flags = pcontext->data.gtop[GTAGS]->flags;
-
-    // fill operation
-    pcontext->super.add = project_simple_add;
-    pcontext->super.delset = project_simple_del_set;
-    pcontext->super.sel = project_simple_select;
-
-    return (PProjectContext)pcontext;
+    return (PProjectContext)project_simple_open(type, root, db, mode);
 }
 
 void project_close(PProjectContext *ppcontext)
 {
-    if (NULL == ppcontext || NULL == *ppcontext)
+    if (NULL == ppcontext)
         return;
 
-    LOGD("close project at: %p", *ppcontext);
-    ProjectContextSimple *pdcontext = (ProjectContextSimple *)*ppcontext;
-
-    // close tags
-	gtags_close(pdcontext->data.gtop[GTAGS]);
-	gtags_close(pdcontext->data.gtop[GRTAGS]);
-
-    // free context
-    free(*ppcontext);
+    project_simple_close((ProjectContextSimple *)*ppcontext);
     *ppcontext = NULL;
 }
 
@@ -155,12 +122,7 @@ int project_select(PProjectContext pcontext, const char *pattern,
         LOGE("Invalid argument");
         return -1;
     }
-    ProjectContextSimple *pdc = (ProjectContextSimple *)pcontext;
-    if (NULL == pdc->data.gtop[db]) {
-        LOGE("Invalid parameter");
-        return -2;
-    }
 
-    return pcontext->sel(pcontext, pattern, query, pdc->data.gtop[db], pout);
+    return pcontext->sel(pcontext, pattern, query, db, pout);
 }
 

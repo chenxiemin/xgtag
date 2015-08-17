@@ -33,11 +33,16 @@ typedef struct
     struct put_func_data data;
 } ProjectContextSimple;
 
+ProjectContextSimple *project_simple_open(int type, const char *root,
+        const char *db, WPATH_MODE_T mode);
+
+void project_simple_close(ProjectContextSimple *pcontext);
+
 // simple project operation functions
 int project_simple_add(void *thiz, const char *file);
 int project_simple_del_set(void *thiz, IDSET *delset);
 int project_simple_select(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout);
+        SEL_TYPE_T query, int db, POutput pout);
 
 #endif
 

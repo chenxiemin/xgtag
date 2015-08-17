@@ -36,7 +36,7 @@ typedef int (*add_project)(void *thiz, const char *file);
 typedef int (*del_set_project)(void *thiz, IDSET *deleteFileIDSet);
 typedef int (*upd_project)(void *thiz, const char *src);
 typedef int (*sel_project)(void *thiz, const char *pattern,
-        SEL_TYPE_T query, GTOP *gtop, POutput pout);
+        SEL_TYPE_T query, int db, POutput pout);
 
 // a project can treate as a folder which contains GTAGS/GPATH/...
 typedef struct ProjectContext
