@@ -461,7 +461,7 @@ function! GtagsDefine()
     let l:cmd = "rm -rf " . l:fileSave . " && "
     " let l:cmd = l:cmd . s:global_command . ' --result=ctags -dqae ' . expand("<cword>")
     " let l:cmd = l:cmd . s:global_command . ' -tdqae ' . expand("<cword>")
-    let l:cmd = l:cmd . s:global_command . " -a " . expand("<cword>")
+    let l:cmd = l:cmd . s:global_command . " -ae ^" . expand("<cword>") . "$"
     let l:cmd = l:cmd . " | tee " . l:fileSave . " | " . l:awkFormat
     let l:result = system(l:cmd)
     " prepare quickfix
@@ -477,7 +477,7 @@ function! GtagsRefers()
     let l:awkFormat = l:awkFormat . "else if (i==2)printf(\"%s: \", $i);"
     let l:awkFormat = l:awkFormat. "else printf(\"%s \", $i);printf(\"\\n\");}'"
     "" let l:cmd = s:global_command . " --result=ctags-mod -qdae " . expand("<cword>")
-    let l:cmd = s:global_command . " --result=ctags-mod -s " . expand("<cword>")
+    let l:cmd = s:global_command . " --result=ctags-mod -se ^" .  expand("<cword>") . "$"
     let l:cmd = l:cmd . " | " . l:awkFormat
     let l:result = system(l:cmd)
     " find references
